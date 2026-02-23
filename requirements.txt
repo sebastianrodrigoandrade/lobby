@@ -1,0 +1,9 @@
+streamlit
+sqlalchemy
+psycopg2-binary
+pandas
+pdfminer.six
+beautifulsoup4
+requests
+python-dotenv
+thefuzz
