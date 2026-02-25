@@ -1,6 +1,6 @@
 streamlit==1.54.0
 sqlalchemy==2.0.25
-psycopg2-binary==2.9.9
+psycopg2-binary==2.9.10
 pandas==2.2.0
 python-dotenv==1.0.1
 rapidfuzz==3.14.3
