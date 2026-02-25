@@ -1,4 +1,3 @@
-# pages/1_Sesiones.py
 import streamlit as st
 import pandas as pd
 from sqlalchemy import text
@@ -6,7 +5,7 @@ from src.database import SessionLocal
 from src.styles import apply_styles
 apply_styles()
 
-st.set_page_config(page_title="Sesiones — Monitor Legislativo", layout="wide")
+st.set_page_config(page_title="Sesiones — Lobby", layout="wide")
 
 @st.cache_data(ttl=3600)
 def cargar_sesiones():
@@ -40,7 +39,7 @@ def cargar_temario_sesion(sesion_id):
 
 # ---------------------------------------------------------
 st.title("Sesiones")
-st.markdown("Cámara de Diputados · 2024-2025")
+st.markdown("<div class='page-subtitle'>Cámara de Diputados · 2024-2025</div>", unsafe_allow_html=True)
 
 df = cargar_sesiones()
 
@@ -52,9 +51,6 @@ df['fecha'] = pd.to_datetime(df['fecha'])
 df['año'] = df['fecha'].dt.year
 df['duracion_horas'] = pd.to_numeric(df['duracion_horas'], errors='coerce')
 
-# ---------------------------------------------------------
-# MÉTRICAS GENERALES
-# ---------------------------------------------------------
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Total sesiones", len(df))
 col2.metric("Con quórum", df[df['hubo_quorum'] == 'Sí'].shape[0])
@@ -63,9 +59,6 @@ col4.metric("Duración promedio", f"{df['duracion_horas'].mean():.1f}h")
 
 st.divider()
 
-# ---------------------------------------------------------
-# FILTROS
-# ---------------------------------------------------------
 col_f1, col_f2 = st.columns(2)
 with col_f1:
     años = ["Todos"] + sorted(df['año'].dropna().unique().astype(int).tolist(), reverse=True)
@@ -80,20 +73,12 @@ if año_sel != "Todos":
 if tipo_sel != "Todos":
     df_filtrado = df_filtrado[df_filtrado['tipo_periodo'] == tipo_sel]
 
-# ---------------------------------------------------------
-# GRÁFICO DE DURACIÓN
-# ---------------------------------------------------------
 st.subheader("Duración por sesión")
 if not df_filtrado.empty:
     chart_data = df_filtrado.set_index('fecha')[['duracion_horas']].sort_index()
     st.bar_chart(chart_data)
 
-# ---------------------------------------------------------
-# TABLA DE SESIONES
-# ---------------------------------------------------------
 st.subheader(f"{len(df_filtrado)} sesiones")
-st.caption(f"Voto A = **{seleccionado}** · Voto B = **{r['nombre_completo']}** · Votaciones donde no coincidieron")
-
 st.dataframe(
     df_filtrado[['fecha', 'tipo_periodo', 'tipo_reunion', 'duracion_horas', 'hubo_quorum', 'periodo_id']].rename(columns={
         'fecha': 'Fecha',
@@ -107,9 +92,6 @@ st.dataframe(
     hide_index=True
 )
 
-# ---------------------------------------------------------
-# DETALLE DE SESIÓN — TEMARIO
-# ---------------------------------------------------------
 st.divider()
 st.subheader("Temario de sesión")
 

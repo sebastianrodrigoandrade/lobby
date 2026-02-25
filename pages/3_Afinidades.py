@@ -1,4 +1,3 @@
-# pages/2_Afinidad.py
 import streamlit as st
 import pandas as pd
 from sqlalchemy import text
@@ -6,13 +5,13 @@ from src.database import SessionLocal
 from src.styles import apply_styles
 apply_styles()
 
-st.set_page_config(page_title="Afinidad de votos — Monitor Legislativo", layout="wide")
+st.set_page_config(page_title="Afinidades — Lobby", layout="wide")
 
 @st.cache_data(ttl=3600)
 def cargar_legisladores():
     db = SessionLocal()
     result = db.execute(text("""
-        SELECT l.id, l.nombre_completo, 
+        SELECT l.id, l.nombre_completo,
                COALESCE(l.bloque, '—') as bloque,
                COALESCE(l.distrito, '—') as distrito,
                COUNT(v.id) as total_votos
@@ -36,7 +35,7 @@ def calcular_afinidad(legislador_id, top_n=20):
             WHERE legislador_id = :id AND acta_id IS NOT NULL
         ),
         comparacion AS (
-            SELECT 
+            SELECT
                 v.legislador_id,
                 COUNT(*) as votaciones_compartidas,
                 SUM(CASE WHEN v.voto_individual = r.voto_individual THEN 1 ELSE 0 END) as coincidencias
@@ -46,13 +45,11 @@ def calcular_afinidad(legislador_id, top_n=20):
             GROUP BY v.legislador_id
             HAVING COUNT(*) >= 20
         )
-        SELECT 
-            l.id as leg_id,
-            l.nombre_completo,
+        SELECT
+            l.id as leg_id, l.nombre_completo,
             COALESCE(l.bloque, '—') as bloque,
             COALESCE(l.distrito, '—') as distrito,
-            c.votaciones_compartidas,
-            c.coincidencias,
+            c.votaciones_compartidas, c.coincidencias,
             ROUND(c.coincidencias * 100.0 / c.votaciones_compartidas, 1) as afinidad_pct
         FROM comparacion c
         JOIN legisladores l ON l.id = c.legislador_id
@@ -73,7 +70,7 @@ def calcular_divergencia(legislador_id, top_n=20):
             WHERE legislador_id = :id AND acta_id IS NOT NULL
         ),
         comparacion AS (
-            SELECT 
+            SELECT
                 v.legislador_id,
                 COUNT(*) as votaciones_compartidas,
                 SUM(CASE WHEN v.voto_individual = r.voto_individual THEN 1 ELSE 0 END) as coincidencias
@@ -83,13 +80,11 @@ def calcular_divergencia(legislador_id, top_n=20):
             GROUP BY v.legislador_id
             HAVING COUNT(*) >= 20
         )
-        SELECT 
-            l.id as leg_id,
-            l.nombre_completo,
+        SELECT
+            l.id as leg_id, l.nombre_completo,
             COALESCE(l.bloque, '—') as bloque,
             COALESCE(l.distrito, '—') as distrito,
-            c.votaciones_compartidas,
-            c.coincidencias,
+            c.votaciones_compartidas, c.coincidencias,
             ROUND(c.coincidencias * 100.0 / c.votaciones_compartidas, 1) as afinidad_pct
         FROM comparacion c
         JOIN legisladores l ON l.id = c.legislador_id
@@ -102,10 +97,9 @@ def calcular_divergencia(legislador_id, top_n=20):
 
 @st.cache_data(ttl=3600)
 def cargar_divergencias(leg_id_a, leg_id_b):
-    """Votaciones donde A y B votaron DISTINTO."""
     db = SessionLocal()
     result = db.execute(text("""
-        SELECT 
+        SELECT
             a.acta_id,
             a.voto_individual as voto_a,
             b.voto_individual as voto_b,
@@ -127,10 +121,9 @@ def cargar_divergencias(leg_id_a, leg_id_b):
 
 @st.cache_data(ttl=3600)
 def cargar_coincidencias(leg_id_a, leg_id_b):
-    """Votaciones donde A y B votaron IGUAL."""
     db = SessionLocal()
     result = db.execute(text("""
-        SELECT 
+        SELECT
             a.acta_id,
             a.voto_individual as voto,
             ac.titulo as asunto,
@@ -149,9 +142,10 @@ def cargar_coincidencias(leg_id_a, leg_id_b):
     db.close()
     return df
 
+
 # ---------------------------------------------------------
-st.title("Afinidad de votos")
-st.markdown("¿Con quién vota igual — y con quién vota distinto?")
+st.title("Afinidades")
+st.markdown("<div class='page-subtitle'>¿Con quién vota igual — y con quién vota distinto?</div>", unsafe_allow_html=True)
 
 df_leg = cargar_legisladores()
 nombres = df_leg['nombre_completo'].tolist()
@@ -187,22 +181,20 @@ with col_a:
         st.info("Sin datos suficientes.")
     else:
         for _, r in df_afin.iterrows():
-            with st.expander(f"**{r['nombre_completo']}** ({r['bloque']}) — {r['afinidad_pct']}% afinidad · {int(r['votaciones_compartidas'])} votaciones"):
-                st.caption(f"Voto A = **{seleccionado}** · Voto B = **{r['nombre_completo']}** · Votaciones donde no coincidieron")
+            with st.expander(f"**{r['nombre_completo']}** ({r['bloque']}) — {r['afinidad_pct']}% · {int(r['votaciones_compartidas'])} votaciones"):
+                st.caption(f"Votaciones donde **no** coincidieron")
                 df_diver = cargar_divergencias(leg_id, int(r['leg_id']))
                 if df_diver.empty:
                     st.write("Coincidieron en todas las votaciones registradas.")
                 else:
                     st.dataframe(
                         df_diver[['fecha', 'asunto', 'voto_a', 'voto_b', 'resultado']].rename(columns={
-                            'fecha': 'Fecha',
-                            'asunto': 'Asunto',
-                            'voto_a': 'Voto A',
-                            'voto_b': 'Voto B',
+                            'fecha': 'Fecha', 'asunto': 'Asunto',
+                            'voto_a': f'Voto {seleccionado.split(",")[0]}',
+                            'voto_b': f'Voto {r["nombre_completo"].split(",")[0]}',
                             'resultado': 'Resultado'
                         }),
-                        use_container_width=True,
-                        hide_index=True
+                        use_container_width=True, hide_index=True
                     )
 
 with col_b:
@@ -211,7 +203,7 @@ with col_b:
         st.info("Sin datos suficientes.")
     else:
         for _, r in df_div.iterrows():
-            with st.expander(f"**{r['nombre_completo']}** ({r['bloque']}) — {r['afinidad_pct']}% afinidad · {int(r['votaciones_compartidas'])} votaciones"):
+            with st.expander(f"**{r['nombre_completo']}** ({r['bloque']}) — {r['afinidad_pct']}% · {int(r['votaciones_compartidas'])} votaciones"):
                 st.caption("Votaciones donde **sí** coincidieron")
                 df_coinc = cargar_coincidencias(leg_id, int(r['leg_id']))
                 if df_coinc.empty:
@@ -219,11 +211,8 @@ with col_b:
                 else:
                     st.dataframe(
                         df_coinc[['fecha', 'asunto', 'voto', 'resultado']].rename(columns={
-                            'fecha': 'Fecha',
-                            'asunto': 'Asunto',
-                            'voto': 'Voto compartido',
-                            'resultado': 'Resultado'
+                            'fecha': 'Fecha', 'asunto': 'Asunto',
+                            'voto': 'Voto compartido', 'resultado': 'Resultado'
                         }),
-                        use_container_width=True,
-                        hide_index=True
+                        use_container_width=True, hide_index=True
                     )

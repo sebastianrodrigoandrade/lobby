@@ -11,3 +11,4 @@ img/
 *.txt
 !requirements.txt
 EOF
+echo "*.dump" >> .gitignore
