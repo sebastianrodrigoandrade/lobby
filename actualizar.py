@@ -1,8 +1,12 @@
 """
 actualizar.py — Orquestador de ingesta incremental
 Corre semanalmente via GitHub Actions o manualmente con: python actualizar.py
+
+Scripts que requieren ejecución manual (no automatizables):
+  - ingestar_temario.py     (requiere CSV generado manualmente)
+  - scrapear_reuniones.py   (requiere Selenium)
+  - scrapear_sesiones.py    (requiere Selenium)
 """
-import sys
 import time
 import os
 from src.utils import logger
@@ -29,14 +33,10 @@ if __name__ == "__main__":
     import ingestar_sesiones
     paso("Sesiones HCDN", ingestar_sesiones.main)
 
-    import ingestar_temario
-    paso("Temario sesiones", ingestar_temario.main)
-
     import scrapear_comisiones
     paso("Comisiones", scrapear_comisiones.main)
 
     if not EN_ACTIONS:
-        # Selenium no disponible en GitHub Actions
         import scrapear_reuniones
         paso("Reuniones de comisiones", scrapear_reuniones.main)
     else:
