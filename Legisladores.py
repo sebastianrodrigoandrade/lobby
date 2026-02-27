@@ -83,7 +83,8 @@ if camara_sel == "Diputados":
 elif camara_sel == "Senadores":
     camara_filtro = "Senadores"
 
-df_leg = cargar_legisladores(camara_filtro)
+solo_vigentes = mandato_sel == "Vigente"
+df_leg = cargar_legisladores(camara_filtro, solo_vigentes)
 
 if df_leg.empty:
     st.title("Lobby")
