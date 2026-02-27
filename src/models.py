@@ -12,6 +12,7 @@ class Legislador(Base):
     camara = Column(String)
     bloque = Column(String)
     distrito = Column(String)
+    mandato_hasta = Column(Date, nullable=True)
     
     votos = relationship("Voto", back_populates="legislador")
     audiencias = relationship("Audiencia", back_populates="legislador")
