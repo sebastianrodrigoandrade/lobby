@@ -2,9 +2,9 @@ import streamlit as st
 import pandas as pd
 from sqlalchemy import text
 from src.database import SessionLocal
-from src.styles import apply_styles
+from src.styles import apply_styles, show_logo
+show_logo()
 apply_styles()
-
 st.set_page_config(page_title="Afinidades — Lobby", layout="wide")
 
 @st.cache_data(ttl=3600)
