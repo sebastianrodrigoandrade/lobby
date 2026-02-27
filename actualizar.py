@@ -4,7 +4,10 @@ Corre semanalmente via GitHub Actions o manualmente con: python actualizar.py
 """
 import sys
 import time
+import os
 from src.utils import logger
+
+EN_ACTIONS = os.getenv('GITHUB_ACTIONS') == 'true'
 
 def paso(nombre, fn):
     logger.info(f"\n{'='*50}")
@@ -32,8 +35,12 @@ if __name__ == "__main__":
     import scrapear_comisiones
     paso("Comisiones", scrapear_comisiones.main)
 
-    import scrapear_reuniones
-    paso("Reuniones de comisiones", scrapear_reuniones.main)
+    if not EN_ACTIONS:
+        # Selenium no disponible en GitHub Actions
+        import scrapear_reuniones
+        paso("Reuniones de comisiones", scrapear_reuniones.main)
+    else:
+        logger.info("SKIP: Reuniones (requiere Selenium, correr manualmente)")
 
     minutos = (time.time() - inicio) / 60
     logger.info(f"\n=== FIN - {minutos:.1f} minutos ===")
