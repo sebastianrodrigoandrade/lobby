@@ -153,6 +153,14 @@ hr {
 </style>
 """
 
+def show_logo():
+    import streamlit as st
+    import os
+    logo_path = os.path.join(os.path.dirname(__file__), '..', 'img', 'logo_lobby.png')
+    if os.path.exists(logo_path):
+        st.sidebar.image(logo_path, use_container_width=True)
+        
 def apply_styles():
     import streamlit as st
     st.markdown(STYLES, unsafe_allow_html=True)
+    
