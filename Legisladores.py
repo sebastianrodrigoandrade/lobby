@@ -41,17 +41,21 @@ def cargar_legisladores(camara=None, solo_vigentes=False):
     db.close()
     return df
 
-@st.cache_data(ttl=3600)
-def cargar_votos_legislador(legislador_id):
+@st.cache_data(ttl=60) # Bajamos el TTL para que refresque rápido
+def cargar_legisladores_v2(camara=None, solo_vigentes=False): # Cambiamos el nombre a v2
     db = SessionLocal()
-    result = db.execute(text("""
-        SELECT v.voto_individual, v.acta_id, v.acta_detalle_id,
-               a.fecha, a.titulo as titulo_acta, a.resultado as resultado_general
-        FROM votos v
-        LEFT JOIN actas_cabecera a ON a.acta_id = v.acta_id
-        WHERE v.legislador_id = :id
-        ORDER BY a.fecha DESC NULLS LAST
-    """), {"id": legislador_id})
+    result = db.execute(text(f"""
+        SELECT l.id, l.nombre_completo, l.camara,
+               COALESCE(l.bloque, '—') as bloque,
+               COALESCE(l.distrito, '—') as distrito,
+               COUNT(v.id) as total_votos,
+               l.mandato_hasta
+        FROM legisladores l
+        LEFT JOIN votos v ON v.legislador_id = l.id
+        {filtro}
+        GROUP BY l.id, l.nombre_completo, l.camara, l.bloque, l.distrito, l.mandato_hasta
+        ORDER BY total_votos DESC
+    """))
     df = pd.DataFrame(result.fetchall(), columns=result.keys())
     db.close()
     return df

@@ -4,30 +4,39 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 # Intentar leer de Streamlit secrets (producción), sino de .env (local)
-try:
-    import streamlit as st
-    DB_USER = st.secrets["DB_USER"]
-    DB_PASS = st.secrets["DB_PASS"]
-    DB_HOST = st.secrets["DB_HOST"]
-    DB_NAME = st.secrets["DB_NAME"]
-    DB_PORT = st.secrets.get("DB_PORT", "5432")
-except Exception:
-    from dotenv import load_dotenv
-    load_dotenv()
-    DB_USER = os.getenv('DB_USER')
-    DB_PASS = os.getenv('DB_PASS')
-    DB_HOST = os.getenv('DB_HOST')
-    DB_NAME = os.getenv('DB_NAME')
-    DB_PORT = os.getenv('DB_PORT', '5432')
+# 1. Intentar leer de variables de entorno (Railway / Local / Docker)
+DB_USER = os.getenv('DB_USER')
+DB_PASS = os.getenv('DB_PASS')
+DB_HOST = os.getenv('DB_HOST')
+DB_NAME = os.getenv('DB_NAME')
+DB_PORT = os.getenv('DB_PORT', '5432')
 
+# 2. Si no están (estamos en Streamlit Cloud), leer de secrets
+if not DB_USER:
+    try:
+        import streamlit as st
+        DB_USER = st.secrets["DB_USER"]
+        DB_PASS = st.secrets["DB_PASS"]
+        DB_HOST = st.secrets["DB_HOST"]
+        DB_NAME = st.secrets["DB_NAME"]
+        DB_PORT = st.secrets.get("DB_PORT", "5432")
+    except Exception:
+        pass
+
+# 3. Validación final
 if not all([DB_USER, DB_PASS, DB_HOST, DB_NAME]):
-    raise ValueError("Faltan variables de entorno")
+    raise ValueError(f"Faltan variables de entorno. USER: {bool(DB_USER)}, HOST: {bool(DB_HOST)}")    
 
 safe_user = urllib.parse.quote_plus(DB_USER)
 safe_pass = urllib.parse.quote_plus(DB_PASS)
 DATABASE_URL = f"postgresql+psycopg2://{safe_user}:{safe_pass}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
-engine = create_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
+engine = create_engine(
+    DATABASE_URL, 
+    echo=False, 
+    pool_pre_ping=True,
+    pool_recycle=300
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
