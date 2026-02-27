@@ -15,21 +15,26 @@ Datos: HCDN · Actualización: 2024-2025
 st.set_page_config(page_title="Monitor Legislativo", layout="wide")
 
 @st.cache_data(ttl=3600)
-def cargar_legisladores(camara=None):
+def cargar_legisladores(camara=None, solo_vigentes=False):
     db = SessionLocal()
-    filtro = ""
+    condiciones = []
     if camara:
-        filtro = f"WHERE l.camara = '{camara}'"
+        condiciones.append(f"l.camara = '{camara}'")
+    if solo_vigentes:
+        condiciones.append("l.mandato_hasta IS NOT NULL")
+    filtro = "WHERE " + " AND ".join(condiciones) if condiciones else ""
     result = db.execute(text(f"""
         SELECT l.id, l.nombre_completo, l.camara,
                COALESCE(l.bloque, '—') as bloque,
                COALESCE(l.distrito, '—') as distrito,
-               COUNT(v.id) as total_votos
+               COUNT(v.id) as total_votos,
+               l.mandato_hasta
         FROM legisladores l
         LEFT JOIN votos v ON v.legislador_id = l.id
         {filtro}
-        GROUP BY l.id, l.nombre_completo, l.camara, l.bloque, l.distrito
-        ORDER BY total_votos DESC    """))
+        GROUP BY l.id, l.nombre_completo, l.camara, l.bloque, l.distrito, l.mandato_hasta
+        ORDER BY total_votos DESC
+    """))
     df = pd.DataFrame(result.fetchall(), columns=result.keys())
     db.close()
     return df
@@ -70,6 +75,7 @@ st.sidebar.title("Monitor Legislativo")
 st.sidebar.markdown("Congreso de la Nación · Argentina")
 
 camara_sel = st.sidebar.radio("Cámara", ["Todos", "Diputados", "Senadores"])
+mandato_sel = st.sidebar.radio("Mandato", ["Todos", "Vigente"])
 
 camara_filtro = None
 if camara_sel == "Diputados":
