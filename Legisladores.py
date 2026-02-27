@@ -3,9 +3,10 @@ import pandas as pd
 from sqlalchemy import text
 from src.database import SessionLocal
 from src.styles import apply_styles
+
+st.set_page_config(page_title="Legisladores · Lobby", layout="wide")
 apply_styles()
-import os
-st.write("DB_HOST:", st.secrets.get("DB_HOST", "NO ENCONTRADO"))
+
 st.sidebar.markdown("---")
 st.sidebar.markdown("""
 <div style='font-size:0.75rem; color:rgba(255,255,255,0.5); padding-top:1rem;'>
@@ -14,7 +15,6 @@ Datos: HCDN · Actualización: 2024-2025
 </div>
 """, unsafe_allow_html=True)
 
-st.set_page_config(page_title="Monitor Legislativo", layout="wide")
 
 @st.cache_data(ttl=3600)
 def cargar_legisladores(camara=None, solo_vigentes=False):
@@ -41,24 +41,22 @@ def cargar_legisladores(camara=None, solo_vigentes=False):
     db.close()
     return df
 
-@st.cache_data(ttl=60) # Bajamos el TTL para que refresque rápido
-def cargar_legisladores_v2(camara=None, solo_vigentes=False): # Cambiamos el nombre a v2
+
+@st.cache_data(ttl=3600)
+def cargar_votos_legislador(legislador_id):
     db = SessionLocal()
-    result = db.execute(text(f"""
-        SELECT l.id, l.nombre_completo, l.camara,
-               COALESCE(l.bloque, '—') as bloque,
-               COALESCE(l.distrito, '—') as distrito,
-               COUNT(v.id) as total_votos,
-               l.mandato_hasta
-        FROM legisladores l
-        LEFT JOIN votos v ON v.legislador_id = l.id
-        {filtro}
-        GROUP BY l.id, l.nombre_completo, l.camara, l.bloque, l.distrito, l.mandato_hasta
-        ORDER BY total_votos DESC
-    """))
+    result = db.execute(text("""
+        SELECT v.voto_individual, v.acta_id, v.acta_detalle_id,
+               a.fecha, a.titulo as titulo_acta, a.resultado as resultado_general
+        FROM votos v
+        LEFT JOIN actas_cabecera a ON a.acta_id = v.acta_id
+        WHERE v.legislador_id = :id
+        ORDER BY a.fecha DESC NULLS LAST
+    """), {"id": legislador_id})
     df = pd.DataFrame(result.fetchall(), columns=result.keys())
     db.close()
     return df
+
 
 @st.cache_data(ttl=3600)
 def cargar_proyectos_legislador(nombre):
@@ -74,8 +72,9 @@ def cargar_proyectos_legislador(nombre):
     db.close()
     return df
 
+
 # ---------------------------------------------------------
-# PESTAÑAS DE CÁMARA
+# SIDEBAR
 # ---------------------------------------------------------
 st.sidebar.title("Monitor Legislativo")
 st.sidebar.markdown("Congreso de la Nación · Argentina")
@@ -94,12 +93,11 @@ df_leg = cargar_legisladores(camara_filtro, solo_vigentes)
 
 if df_leg.empty:
     st.title("Lobby")
-    st.markdown("<div class='page-subtitle'>Perfil de legisladores · Cámara de Diputados · Argentina</div>", unsafe_allow_html=True)
-    st.warning(f"No hay datos de {camara_sel} disponibles aún. Próximamente.")
+    st.warning(f"No hay datos de {camara_sel} disponibles aún.")
     st.stop()
 
 # ---------------------------------------------------------
-# SIDEBAR — FILTROS
+# FILTROS
 # ---------------------------------------------------------
 bloques = ["Todos"] + sorted([b for b in df_leg['bloque'].unique() if b != '—'])
 bloque_sel = st.sidebar.selectbox("Filtrar por bloque", bloques)
@@ -139,7 +137,7 @@ st.dataframe(
 )
 
 # ---------------------------------------------------------
-# PERFIL DE LEGISLADOR
+# PERFIL
 # ---------------------------------------------------------
 st.divider()
 st.subheader("Perfil de legislador")
@@ -160,14 +158,12 @@ col4.markdown(f"**VOTOS REGISTRADOS**\n\n{int(row['total_votos'])}")
 
 tabs = st.tabs(["Votaciones", "Proyectos presentados"])
 
-# --- TAB 1: VOTACIONES ---
 with tabs[0]:
     df_votos = cargar_votos_legislador(int(row['id']))
 
     if df_votos.empty:
         st.info("No hay votos registrados.")
     else:
-        # Distribución general
         col_a, col_b = st.columns([1, 2])
         with col_a:
             dist = df_votos['voto_individual'].value_counts().reset_index()
@@ -185,7 +181,6 @@ with tabs[0]:
             else:
                 st.info("Sin datos de fecha para graficar evolución.")
 
-        # Últimas votaciones con fecha
         st.markdown("#### Últimas votaciones")
         df_con_fecha = df_votos.dropna(subset=['fecha']).head(20)
         if not df_con_fecha.empty:
@@ -200,9 +195,8 @@ with tabs[0]:
                 hide_index=True
             )
         else:
-            st.info("Sin fechas disponibles para los votos registrados.")
+            st.info("Sin fechas disponibles.")
 
-# --- TAB 2: PROYECTOS ---
 with tabs[1]:
     apellido = seleccionado.split()[0]
     df_proyectos = cargar_proyectos_legislador(apellido)
