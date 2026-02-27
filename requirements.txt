@@ -4,3 +4,6 @@ psycopg2-binary
 pandas
 python-dotenv
 rapidfuzz
+thefuzz
+beautifulsoup4
+requests
