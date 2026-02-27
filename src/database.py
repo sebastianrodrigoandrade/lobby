@@ -27,7 +27,7 @@ safe_user = urllib.parse.quote_plus(DB_USER)
 safe_pass = urllib.parse.quote_plus(DB_PASS)
 DATABASE_URL = f"postgresql+psycopg2://{safe_user}:{safe_pass}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
-engine = create_engine(DATABASE_URL, echo=False)
+engine = create_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
