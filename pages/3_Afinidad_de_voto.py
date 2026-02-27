@@ -3,9 +3,10 @@ import pandas as pd
 from sqlalchemy import text
 from src.database import SessionLocal
 from src.styles import apply_styles, show_logo
-show_logo()
+
+st.set_page_config(page_title="Votaciones — Lobby", layout="wide")
 apply_styles()
-st.set_page_config(page_title="Afinidades — Lobby", layout="wide")
+show_logo()
 
 @st.cache_data(ttl=3600)
 def cargar_legisladores():

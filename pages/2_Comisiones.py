@@ -4,10 +4,10 @@ import pandas as pd
 from sqlalchemy import text
 from src.database import SessionLocal
 from src.styles import apply_styles, show_logo
-show_logo()
-apply_styles()
 
-st.set_page_config(page_title="Comisiones — Lobby", layout="wide")
+st.set_page_config(page_title="Votaciones — Lobby", layout="wide")
+apply_styles()
+show_logo()
 
 NOMBRES_COMISIONES = {
     "caconstitucionales": "Asuntos Constitucionales",
