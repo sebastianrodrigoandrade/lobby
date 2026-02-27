@@ -4,6 +4,8 @@ from sqlalchemy import text
 from src.database import SessionLocal
 from src.styles import apply_styles
 apply_styles()
+import os
+st.write("DB_HOST:", st.secrets.get("DB_HOST", "NO ENCONTRADO"))
 st.sidebar.markdown("---")
 st.sidebar.markdown("""
 <div style='font-size:0.75rem; color:rgba(255,255,255,0.5); padding-top:1rem;'>
