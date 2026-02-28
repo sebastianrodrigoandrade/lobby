@@ -11,11 +11,6 @@ html, body, [class*="css"] {
     color: #1a1a1a;
 }
 
-/* ── OCULTAR ELEMENTOS DE STREAMLIT ── */
-#MainMenu {visibility: hidden;}
-footer {visibility: hidden;}
-header {visibility: hidden;}
-
 /* ── SIDEBAR ── */
 [data-testid="stSidebar"] {
     background-color: #0F2240;
