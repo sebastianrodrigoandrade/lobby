@@ -12,6 +12,12 @@ html, body, [class*="css"] {
 }
 
 /* ── SIDEBAR ── */
+[data-testid="stSidebarContent"] {
+    padding-top: 0 !important;
+}
+[data-testid="stSidebarNav"] {
+    padding-top: 0 !important;
+}
 [data-testid="stSidebar"] {
     background-color: #0F2240;
     color: white;
