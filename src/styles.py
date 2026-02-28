@@ -12,6 +12,17 @@ html, body, [class*="css"] {
 }
 
 /* ── SIDEBAR ── */
+/* Mover logo arriba del menú de navegación */
+[data-testid="stSidebarContent"] {
+    display: flex;
+    flex-direction: column;
+}
+[data-testid="stSidebarNav"] {
+    order: 2;
+}
+[data-testid="stSidebarUserContent"] {
+    order: 1;
+}
 [data-testid="stSidebarContent"] {
     padding-top: 0 !important;
 }
