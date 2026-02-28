@@ -4,11 +4,10 @@ import pandas as pd
 from src.styles import apply_styles, show_logo
 from sqlalchemy import text
 from src.database import SessionLocal
-
-st.set_page_config(page_title="Votaciones — Lobby", layout="wide")
+st.set_page_config(page_title="...", layout="wide")
 apply_styles()
-show_logo()
-
+show_logo()  
+st.sidebar.title("Monitor Legislativo")
 
 ENCODING = {
     '¾': 'ó', 'ß': 'á', '±': 'ñ', 'Ý': 'í', '┴': 'Á',

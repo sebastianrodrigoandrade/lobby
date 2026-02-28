@@ -4,9 +4,10 @@ from sqlalchemy import text
 from src.database import SessionLocal
 from src.styles import apply_styles, show_logo
 
-st.set_page_config(page_title="Votaciones — Lobby", layout="wide")
+st.set_page_config(page_title="...", layout="wide")
 apply_styles()
-show_logo()
+show_logo() 
+st.sidebar.title("Monitor Legislativo")
 
 URL_BUSCADOR = "https://www2.jus.gov.ar/consultaddjj/Home/Busqueda"
 URL_CSV = "https://datos.jus.gob.ar/dataset/4680199f-6234-4262-8a2a-8f7993bf784d/resource/a331ccb8-5c13-447f-9bd6-d8018a4b8a62/download/ddjj-2024-12-22.csv"

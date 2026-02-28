@@ -5,9 +5,10 @@ from sqlalchemy import text
 from src.database import SessionLocal
 from src.styles import apply_styles, show_logo
 
-st.set_page_config(page_title="Votaciones — Lobby", layout="wide")
+st.set_page_config(page_title="...", layout="wide")
 apply_styles()
-show_logo()
+show_logo() 
+st.sidebar.title("Monitor Legislativo")
 
 NOMBRES_COMISIONES = {
     "caconstitucionales": "Asuntos Constitucionales",

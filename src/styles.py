@@ -151,13 +151,12 @@ hr {
 def show_logo():
     import streamlit as st
     import os
-    # Buscar desde la raíz del proyecto
     base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     logo_path = os.path.join(base, 'img', 'logo_lobby.png')
     if os.path.exists(logo_path):
         st.sidebar.image(logo_path, use_container_width=True)
     else:
-        st.sidebar.markdown("**LOBBY**") 
+        st.sidebar.markdown("**LOBBY**")
         
 def apply_styles():
     import streamlit as st
