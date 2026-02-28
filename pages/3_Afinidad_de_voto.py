@@ -4,25 +4,27 @@ from sqlalchemy import text
 from src.database import SessionLocal
 from src.styles import apply_styles, show_logo
 
-st.set_page_config(page_title="Afinidad de voto · Lobby", layout="wide")
+st.set_page_config(page_title="Afinidades · Lobby", layout="wide")
 apply_styles()
 show_logo()
 st.sidebar.title("Monitor Legislativo")
-st.sidebar.markdown("Congreso de la Nación · Argentina")
+
+solo_vigentes = st.sidebar.toggle("Solo mandatos vigentes", value=True)
 
 
 @st.cache_data(ttl=3600)
-def cargar_legisladores():
+def cargar_legisladores(solo_vigentes=True):
     db = SessionLocal()
-    result = db.execute(text("""
+    filtro_mandato = "AND l.mandato_hasta >= CURRENT_DATE" if solo_vigentes else ""
+    result = db.execute(text(f"""
         SELECT l.id, l.nombre_completo,
                COALESCE(l.bloque, '—') as bloque,
                COALESCE(l.distrito, '—') as distrito,
-               l.camara,
                COUNT(v.id) as total_votos
         FROM legisladores l
         JOIN votos v ON v.legislador_id = l.id
-        GROUP BY l.id, l.nombre_completo, l.bloque, l.distrito, l.camara
+        WHERE 1=1 {filtro_mandato}
+        GROUP BY l.id, l.nombre_completo, l.bloque, l.distrito
         HAVING COUNT(v.id) > 50
         ORDER BY l.nombre_completo
     """))
@@ -32,33 +34,33 @@ def cargar_legisladores():
 
 
 @st.cache_data(ttl=3600)
-def calcular_afinidad(legislador_id, bloque_filtro=None, top_n=20):
+def calcular_afinidad(legislador_id, top_n=20):
     db = SessionLocal()
-    filtro_bloque = f"AND l.bloque = '{bloque_filtro}'" if bloque_filtro else ""
-    result = db.execute(text(f"""
+    result = db.execute(text("""
         WITH votos_ref AS (
             SELECT acta_id, voto_individual
             FROM votos
             WHERE legislador_id = :id AND acta_id IS NOT NULL
         ),
         comparacion AS (
-            SELECT v.legislador_id,
-                   COUNT(*) as votaciones_compartidas,
-                   SUM(CASE WHEN v.voto_individual = r.voto_individual THEN 1 ELSE 0 END) as coincidencias
+            SELECT
+                v.legislador_id,
+                COUNT(*) as votaciones_compartidas,
+                SUM(CASE WHEN v.voto_individual = r.voto_individual THEN 1 ELSE 0 END) as coincidencias
             FROM votos v
             JOIN votos_ref r ON r.acta_id = v.acta_id
             WHERE v.legislador_id != :id AND v.acta_id IS NOT NULL
             GROUP BY v.legislador_id
             HAVING COUNT(*) >= 20
         )
-        SELECT l.id as leg_id, l.nombre_completo,
-               COALESCE(l.bloque, '—') as bloque,
-               COALESCE(l.distrito, '—') as distrito,
-               c.votaciones_compartidas, c.coincidencias,
-               ROUND(c.coincidencias * 100.0 / c.votaciones_compartidas, 1) as afinidad_pct
+        SELECT
+            l.id as leg_id, l.nombre_completo,
+            COALESCE(l.bloque, '—') as bloque,
+            COALESCE(l.distrito, '—') as distrito,
+            c.votaciones_compartidas, c.coincidencias,
+            ROUND(c.coincidencias * 100.0 / c.votaciones_compartidas, 1) as afinidad_pct
         FROM comparacion c
         JOIN legisladores l ON l.id = c.legislador_id
-        WHERE 1=1 {filtro_bloque}
         ORDER BY afinidad_pct DESC
         LIMIT :top_n
     """), {"id": legislador_id, "top_n": top_n})
@@ -68,33 +70,33 @@ def calcular_afinidad(legislador_id, bloque_filtro=None, top_n=20):
 
 
 @st.cache_data(ttl=3600)
-def calcular_divergencia(legislador_id, bloque_filtro=None, top_n=20):
+def calcular_divergencia(legislador_id, top_n=20):
     db = SessionLocal()
-    filtro_bloque = f"AND l.bloque = '{bloque_filtro}'" if bloque_filtro else ""
-    result = db.execute(text(f"""
+    result = db.execute(text("""
         WITH votos_ref AS (
             SELECT acta_id, voto_individual
             FROM votos
             WHERE legislador_id = :id AND acta_id IS NOT NULL
         ),
         comparacion AS (
-            SELECT v.legislador_id,
-                   COUNT(*) as votaciones_compartidas,
-                   SUM(CASE WHEN v.voto_individual = r.voto_individual THEN 1 ELSE 0 END) as coincidencias
+            SELECT
+                v.legislador_id,
+                COUNT(*) as votaciones_compartidas,
+                SUM(CASE WHEN v.voto_individual = r.voto_individual THEN 1 ELSE 0 END) as coincidencias
             FROM votos v
             JOIN votos_ref r ON r.acta_id = v.acta_id
             WHERE v.legislador_id != :id AND v.acta_id IS NOT NULL
             GROUP BY v.legislador_id
             HAVING COUNT(*) >= 20
         )
-        SELECT l.id as leg_id, l.nombre_completo,
-               COALESCE(l.bloque, '—') as bloque,
-               COALESCE(l.distrito, '—') as distrito,
-               c.votaciones_compartidas, c.coincidencias,
-               ROUND(c.coincidencias * 100.0 / c.votaciones_compartidas, 1) as afinidad_pct
+        SELECT
+            l.id as leg_id, l.nombre_completo,
+            COALESCE(l.bloque, '—') as bloque,
+            COALESCE(l.distrito, '—') as distrito,
+            c.votaciones_compartidas, c.coincidencias,
+            ROUND(c.coincidencias * 100.0 / c.votaciones_compartidas, 1) as afinidad_pct
         FROM comparacion c
         JOIN legisladores l ON l.id = c.legislador_id
-        WHERE 1=1 {filtro_bloque}
         ORDER BY afinidad_pct ASC
         LIMIT :top_n
     """), {"id": legislador_id, "top_n": top_n})
@@ -107,8 +109,13 @@ def calcular_divergencia(legislador_id, bloque_filtro=None, top_n=20):
 def cargar_divergencias(leg_id_a, leg_id_b):
     db = SessionLocal()
     result = db.execute(text("""
-        SELECT a.acta_id, a.voto_individual as voto_a, b.voto_individual as voto_b,
-               ac.titulo as asunto, ac.fecha, ac.resultado
+        SELECT
+            a.acta_id,
+            a.voto_individual as voto_a,
+            b.voto_individual as voto_b,
+            ac.titulo as asunto,
+            ac.fecha,
+            ac.resultado
         FROM votos a
         JOIN votos b ON b.acta_id = a.acta_id AND b.legislador_id = :leg_b
         LEFT JOIN actas_cabecera ac ON ac.acta_id = a.acta_id
@@ -127,8 +134,12 @@ def cargar_divergencias(leg_id_a, leg_id_b):
 def cargar_coincidencias(leg_id_a, leg_id_b):
     db = SessionLocal()
     result = db.execute(text("""
-        SELECT a.acta_id, a.voto_individual as voto,
-               ac.titulo as asunto, ac.fecha, ac.resultado
+        SELECT
+            a.acta_id,
+            a.voto_individual as voto,
+            ac.titulo as asunto,
+            ac.fecha,
+            ac.resultado
         FROM votos a
         JOIN votos b ON b.acta_id = a.acta_id AND b.legislador_id = :leg_b
         LEFT JOIN actas_cabecera ac ON ac.acta_id = a.acta_id
@@ -144,26 +155,14 @@ def cargar_coincidencias(leg_id_a, leg_id_b):
 
 
 # ---------------------------------------------------------
-st.title("Afinidad de voto")
-st.markdown("<div class='page-subtitle'>Con quién vota igual — y con quién vota distinto</div>", unsafe_allow_html=True)
+st.title("Afinidades")
+estado_label = "vigentes" if solo_vigentes else "(incluye históricos)"
+st.markdown(f"<div class='page-subtitle'>¿Con quién vota igual — y con quién vota distinto? · Legisladores {estado_label}</div>", unsafe_allow_html=True)
 
-df_leg = cargar_legisladores()
-
-# Filtros en sidebar
-bloques_disp = ["Todos"] + sorted([b for b in df_leg['bloque'].unique() if b != '—'])
-bloque_filtro_sel = st.sidebar.selectbox("Filtrar resultados por bloque", bloques_disp)
-bloque_filtro = None if bloque_filtro_sel == "Todos" else bloque_filtro_sel
-
-camaras_disp = ["Todas"] + sorted(df_leg['camara'].dropna().unique().tolist())
-camara_filtro_sel = st.sidebar.selectbox("Filtrar por cámara", camaras_disp)
-
-# Selector de legislador
-df_para_selector = df_leg.copy()
-if camara_filtro_sel != "Todas":
-    df_para_selector = df_para_selector[df_para_selector['camara'] == camara_filtro_sel]
+df_leg = cargar_legisladores(solo_vigentes)
+nombres = df_leg['nombre_completo'].tolist()
 
 busqueda = st.text_input("Buscar legislador", placeholder="Ej: Lospennato, Kirchner, Espert...")
-nombres = df_para_selector['nombre_completo'].tolist()
 if busqueda:
     nombres = [n for n in nombres if busqueda.lower() in n.lower()]
 
@@ -172,23 +171,19 @@ if not nombres:
     st.stop()
 
 seleccionado = st.selectbox("Seleccionar legislador", nombres)
-row = df_para_selector[df_para_selector['nombre_completo'] == seleccionado].iloc[0]
+row = df_leg[df_leg['nombre_completo'] == seleccionado].iloc[0]
 leg_id = int(row['id'])
 
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3 = st.columns(3)
 col1.metric("Bloque", row['bloque'])
 col2.metric("Distrito", row['distrito'])
-col3.metric("Cámara", row['camara'])
-col4.metric("Votaciones analizadas", int(row['total_votos']))
-
-if bloque_filtro:
-    st.info(f"Mostrando afinidades solo con legisladores del bloque: **{bloque_filtro}**")
+col3.metric("Votaciones analizadas", int(row['total_votos']))
 
 st.divider()
 
 with st.spinner("Calculando afinidad..."):
-    df_afin = calcular_afinidad(leg_id, bloque_filtro)
-    df_div = calcular_divergencia(leg_id, bloque_filtro)
+    df_afin = calcular_afinidad(leg_id)
+    df_div = calcular_divergencia(leg_id)
 
 col_a, col_b = st.columns(2)
 
@@ -199,7 +194,7 @@ with col_a:
     else:
         for _, r in df_afin.iterrows():
             with st.expander(f"**{r['nombre_completo']}** ({r['bloque']}) — {r['afinidad_pct']}% · {int(r['votaciones_compartidas'])} votaciones"):
-                st.caption("Votaciones donde **no** coincidieron")
+                st.caption(f"Votaciones donde **no** coincidieron")
                 df_diver = cargar_divergencias(leg_id, int(r['leg_id']))
                 if df_diver.empty:
                     st.write("Coincidieron en todas las votaciones registradas.")
@@ -207,8 +202,8 @@ with col_a:
                     st.dataframe(
                         df_diver[['fecha', 'asunto', 'voto_a', 'voto_b', 'resultado']].rename(columns={
                             'fecha': 'Fecha', 'asunto': 'Asunto',
-                            'voto_a': f'Voto {seleccionado.split()[0]}',
-                            'voto_b': f'Voto {r["nombre_completo"].split()[0]}',
+                            'voto_a': f'Voto {seleccionado.split(",")[0]}',
+                            'voto_b': f'Voto {r["nombre_completo"].split(",")[0]}',
                             'resultado': 'Resultado'
                         }),
                         use_container_width=True, hide_index=True

@@ -2,6 +2,8 @@ import os
 import urllib.parse
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
+from dotenv import load_dotenv
+load_dotenv()
 
 # 1. Intentar leer de variables de entorno (Railway / Local)
 DB_USER = os.getenv('DB_USER')

@@ -12,3 +12,9 @@ img/
 !requirements.txt
 EOF
 echo "*.dump" >> .gitignore
+
+DB_HOST=ep-patient-shadow-aiqmylpa-pooler.c-4.us-east-1.aws.neon.tech
+DB_PORT=5432
+DB_NAME=neondb
+DB_USER=neondb_owner
+DB_PASS=npg_kASKs8f9jdHT
