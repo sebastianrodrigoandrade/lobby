@@ -7,19 +7,31 @@ os.environ['DB_PORT'] = '5432'
 
 from src.database import SessionLocal
 from sqlalchemy import text
+import pandas as pd
 
 db = SessionLocal()
 
-# Marcar registro basura con bloque especial para filtrarlo en UI
-db.execute(text("UPDATE legisladores SET bloque = 'DATO INVALIDO' WHERE nombre_completo = 'xx BORRAR Manuel Isauro'"))
-
-# Ver cuántos votos tiene UÑAC y cómo está en la DB
+# Ver cobertura por año y cuántos legisladores tienen serie completa
 r = db.execute(text("""
-    SELECT id, nombre_completo, bloque, distrito FROM legisladores 
-    WHERE nombre_completo ILIKE '%A%AC%' AND camara = 'Diputados' AND bloque IS NULL
+    SELECT anio, COUNT(DISTINCT cuit) as legisladores, COUNT(*) as registros
+    FROM ddjj_historico
+    GROUP BY anio ORDER BY anio
 """))
+print("Año | Legisladores | Registros")
 for row in r:
-    print(row)
+    print(f"  {row[0]} | {row[1]:12d} | {row[2]}")
 
-db.commit()
+# Ver un legislador con serie larga como ejemplo
+r2 = db.execute(text("""
+    SELECT funcionario_apellido_nombre, COUNT(DISTINCT anio) as años
+    FROM ddjj_historico
+    WHERE legislador_id IS NOT NULL
+    GROUP BY funcionario_apellido_nombre
+    ORDER BY años DESC
+    LIMIT 5
+"""))
+print("\nLegisladores con más años de datos:")
+for row in r2:
+    print(f"  {row[0]} — {row[1]} años")
+
 db.close()
