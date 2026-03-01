@@ -23,7 +23,9 @@ def cargar_legisladores(solo_vigentes=True):
                COUNT(v.id) as total_votos
         FROM legisladores l
         JOIN votos v ON v.legislador_id = l.id
-        WHERE 1=1 {filtro_mandato}
+        WHERE l.nombre_completo != 'xx BORRAR Manuel Isauro'
+          AND COALESCE(l.bloque, '') != 'DATO INVALIDO'
+          {filtro_mandato}
         GROUP BY l.id, l.nombre_completo, l.bloque, l.distrito
         HAVING COUNT(v.id) > 50
         ORDER BY l.nombre_completo

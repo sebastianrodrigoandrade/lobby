@@ -39,7 +39,9 @@ def cargar_ddjj(solo_vigentes=True):
             l.mandato_hasta
         FROM ddjj_legisladores d
         LEFT JOIN legisladores l ON l.id = d.legislador_id
-        WHERE 1=1 {filtro_mandato}
+        WHERE l.nombre_completo != 'xx BORRAR Manuel Isauro'
+          AND COALESCE(l.bloque, '') != 'DATO INVALIDO'
+          {filtro_mandato}
         ORDER BY d.patrimonio_neto DESC NULLS LAST
     """))
     df = pd.DataFrame(result.fetchall(), columns=result.keys())

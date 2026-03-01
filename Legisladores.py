@@ -19,12 +19,13 @@ Datos: HCDN · Actualización: 2024-2025
 @st.cache_data(ttl=3600)
 def cargar_legisladores(camara=None, solo_vigentes=True):
     db = SessionLocal()
-    filtros = []
+    filtros = ["l.nombre_completo != 'xx BORRAR Manuel Isauro'",
+               "COALESCE(l.bloque, '') != 'DATO INVALIDO'"]
     if camara:
         filtros.append(f"l.camara = '{camara}'")
     if solo_vigentes:
         filtros.append("l.mandato_hasta >= CURRENT_DATE")
-    where = ("WHERE " + " AND ".join(filtros)) if filtros else ""
+    where = "WHERE " + " AND ".join(filtros)
     result = db.execute(text(f"""
         SELECT l.id, l.nombre_completo, l.camara,
                COALESCE(l.bloque, '—') as bloque,
