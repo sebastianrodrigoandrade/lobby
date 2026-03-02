@@ -1,139 +1,62 @@
-import sys
-import requests
-from datetime import datetime
+"""
+Lobby - Plataforma de Inteligencia Pública
+Archivo principal con navegación horizontal
+"""
+import streamlit as st
 
-from src.database import engine, Base, SessionLocal
-from src.utils import logger, IdentityResolver
-from src.models import Legislador, Proyecto, Voto
-from src.extractors.api_client import ArgentinaDatosClient, OpenDataPortalClient
+st.set_page_config(
+    page_title="Lobby · Inteligencia Pública",
+    page_icon="🏛️",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
 
-def main():
-    logger.info("=== INICIANDO PIPELINE DE INGESTA CONGRESO ===")
+from streamlit_option_menu import option_menu
+from src.styles import apply_styles
+from src.pages import home, legisladores, actividad, patrimonio, estadisticas
 
-    Base.metadata.create_all(bind=engine)
-    session = SessionLocal()
+# Aplicar estilos
+apply_styles()
 
-    try:
-        api_client = ArgentinaDatosClient()
-        portal_client = OpenDataPortalClient()
+# Header manual
+st.markdown("""
+<div style="background: #0F2240; margin: -6rem -4rem 1rem -4rem; padding: 1rem 2rem; display: flex; align-items: center; justify-content: space-between;">
+    <div style="display: flex; align-items: center; gap: 0.6rem;">
+        <div style="width: 36px; height: 36px; background: #E8C547; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-weight: 700; color: #0F2240; font-size: 1.2rem;">L</div>
+        <span style="font-family: Georgia, serif; font-size: 1.6rem; color: white;">Lobby</span>
+    </div>
+    <div style="font-size: 0.8rem; color: rgba(255,255,255,0.6);">
+        Plataforma de Inteligencia Pública · Argentina
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
-        # PASO 1: INGESTA DE PROYECTOS (con paginación completa)
-        logger.info("--- Iniciando Ingesta de Proyectos ---")
-        df_proyectos = portal_client.extract_hcdn_bills()
+# ============================================
+# NAVEGACIÓN HORIZONTAL
+# ============================================
 
-        nuevos_proyectos_count = 0
-        if not df_proyectos.empty:
-            # ✅ Cache en memoria de expedientes ya existentes
-            expedientes_existentes = {
-                p.nro_expediente
-                for p in session.query(Proyecto.nro_expediente).all()
-            }
-            logger.info(f"Proyectos ya en DB: {len(expedientes_existentes)}")
+selected = option_menu(
+    menu_title=None,
+    options=["Inicio", "Legisladores", "Actividad", "Patrimonio", "Estadísticas"],
+    icons=["house", "people", "clipboard-check", "cash-stack", "bar-chart"],
+    default_index=0,
+    orientation="horizontal",
+)
 
-            for _, row in df_proyectos.iterrows():
-                expediente = row.get('nro_expediente')
-                if not expediente:
-                    continue
+# Espaciado
+st.markdown("<div style='height: 1rem'></div>", unsafe_allow_html=True)
 
-                # ✅ Chequeo en memoria, no query por cada fila
-                if expediente in expedientes_existentes:
-                    continue
+# ============================================
+# RENDERIZAR PÁGINA SELECCIONADA
+# ============================================
 
-                session.add(Proyecto(
-                    nro_expediente=expediente,
-                    titulo=row.get('titulo'),
-                    fecha_ingreso=row.get('fecha_ingreso'),
-                    estado=row.get('estado'),
-                    autores=row.get('autores')
-                ))
-                expedientes_existentes.add(expediente)  # evitar duplicados dentro del mismo batch
-                nuevos_proyectos_count += 1
-
-                if nuevos_proyectos_count % 2000 == 0:
-                    session.commit()
-                    logger.info(f"  {nuevos_proyectos_count} proyectos insertados...")
-
-            session.commit()
-            logger.info(f"Se insertaron {nuevos_proyectos_count} proyectos nuevos.")
-
-        # ---------------------------------------------------------
-        # PASO 2: VOTACIONES Y RESOLUCIÓN DE IDENTIDADES
-        # ---------------------------------------------------------
-        logger.info("--- Iniciando Ingesta de Votos e Identidades ---")
-        votos_data = api_client.get_votes_history("diputados")
-
-        # Resolver legisladores únicos
-        nombres_unicos = {
-            r.get('diputado_nombre') for r in votos_data
-            if r.get('diputado_nombre') and isinstance(r.get('diputado_nombre'), str)
-        }
-        logger.info(f"Procesando {len(nombres_unicos)} legisladores únicos...")
-
-        for nombre in nombres_unicos:
-            IdentityResolver.resolve_legislator(
-                session, nombre=nombre, dni_cuit=None,
-                camara='Diputados', bloque=None, distrito=None
-            )
-        session.commit()
-
-        # ✅ Cache en memoria: evita query a DB por cada voto
-        cache_legisladores = {
-            leg.nombre_completo: leg.id
-            for leg in session.query(Legislador).all()
-        }
-        logger.info(f"Cache cargado: {len(cache_legisladores)} legisladores.")
-
-        # ✅ Deduplicación: traer acta_detalle_ids ya insertados
-        from src.models import Voto as VotoModel
-        ids_existentes = {
-            v.acta_detalle_id
-            for v in session.query(VotoModel.acta_detalle_id).all()
-            if v.acta_detalle_id is not None
-        }
-        logger.info(f"Votos ya existentes en DB: {len(ids_existentes)}")
-
-        logger.info("Insertando votos...")
-        nuevos_votos = 0
-        saltados = 0
-
-        for registro in votos_data:
-            nombre = registro.get('diputado_nombre')
-            if not nombre or not isinstance(nombre, str):
-                continue
-
-            # ✅ Deduplicación por acta_detalle_id
-            acta_detalle_id = registro.get('acta_detalle_id')
-            if acta_detalle_id and acta_detalle_id in ids_existentes:
-                saltados += 1
-                continue
-
-            legislador_id = cache_legisladores.get(nombre)
-            if not legislador_id:
-                continue
-
-            session.add(Voto(
-                legislador_id=legislador_id,
-                acta_detalle_id=acta_detalle_id,
-                acta_id=registro.get('acta_id'),
-                voto_individual=registro.get('voto'),
-            ))
-            nuevos_votos += 1
-
-            if nuevos_votos % 5000 == 0:
-                session.commit()
-                logger.info(f"  {nuevos_votos} votos insertados...")
-
-        session.commit()
-        logger.info(f"Pipeline finalizado. Nuevos: {nuevos_votos} | Saltados (ya existían): {saltados}")
-
-    except Exception as e:
-        logger.error(f"ERROR FATAL EN PIPELINE: {e}")
-        session.rollback()
-        raise e
-
-    finally:
-        session.close()
-        logger.info("Sesión de base de datos cerrada.")
-
-if __name__ == "__main__":
-    main()
+if selected == "Inicio":
+    home.render()
+elif selected == "Legisladores":
+    legisladores.render()
+elif selected == "Actividad":
+    actividad.render()
+elif selected == "Patrimonio":
+    patrimonio.render()
+elif selected == "Estadísticas":
+    estadisticas.render()
