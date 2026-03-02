@@ -10,3 +10,4 @@ requests
 selenium
 webdriver-manager
 plotly
+streamlit-option-menu
