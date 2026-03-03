@@ -4,6 +4,7 @@ Archivo principal con navegación horizontal
 """
 import streamlit as st
 
+
 st.set_page_config(
     page_title="Lobby · Inteligencia Pública",
     page_icon="🏛️",
@@ -13,7 +14,7 @@ st.set_page_config(
 
 from streamlit_option_menu import option_menu
 from src.styles import apply_styles
-from src.pages import home, legisladores, actividad, patrimonio, estadisticas
+from src.pages import home, legisladores, actividad, patrimonio, estadisticas, causas
 
 # Aplicar estilos
 apply_styles()
@@ -37,8 +38,8 @@ st.markdown("""
 
 selected = option_menu(
     menu_title=None,
-    options=["Inicio", "Legisladores", "Actividad", "Patrimonio", "Estadísticas"],
-    icons=["house", "people", "clipboard-check", "cash-stack", "bar-chart"],
+    options=["Inicio", "Legisladores", "Actividad", "Patrimonio", "Estadísticas", "Causas"],
+    icons=["house", "people", "clipboard-check", "cash-stack", "bar-chart", "gavel"],
     default_index=0,
     orientation="horizontal",
 )
@@ -60,3 +61,5 @@ elif selected == "Patrimonio":
     patrimonio.render()
 elif selected == "Estadísticas":
     estadisticas.render()
+elif selected == "Causas":
+    causas.render()
