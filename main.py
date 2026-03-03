@@ -14,7 +14,7 @@ st.set_page_config(
 
 from streamlit_option_menu import option_menu
 from src.styles import apply_styles
-from src.pages import home, legisladores, actividad, patrimonio, estadisticas, causas
+from src.pages import home, legisladores, actividad, patrimonio, estadisticas
 
 # Aplicar estilos
 apply_styles()
@@ -38,7 +38,7 @@ st.markdown("""
 
 selected = option_menu(
     menu_title=None,
-    options=["Inicio", "Legisladores", "Actividad", "Patrimonio", "Estadísticas", "Causas"],
+    options=["Inicio", "Legisladores", "Actividad", "Patrimonio", "Estadisticas"],
     icons=["house", "people", "clipboard-check", "cash-stack", "bar-chart", "gavel"],
     default_index=0,
     orientation="horizontal",
@@ -59,7 +59,7 @@ elif selected == "Actividad":
     actividad.render()
 elif selected == "Patrimonio":
     patrimonio.render()
-elif selected == "Estadísticas":
+elif selected == "Estadisticas":
     estadisticas.render()
-elif selected == "Causas":
-    causas.render()
+# elif selected == "Causas":
+#     causas.render()
