@@ -19,3 +19,11 @@ DB_NAME=neondb
 DB_USER=neondb_owner
 DB_PASS=npg_kASKs8f9jdHTdata/archivo_cij/*.json
 data/causas_corrupcion/*.json
+data/votaciones_hcdn/*.csv
+data/audiencias_ejecutivo/*.csv
+data/misiones_oficiales/*.csv
+data/personal_hcdn/*.csv
+data/votaciones_hcdn/*.csv
+data/audiencias_ejecutivo/*.csv
+data/misiones_oficiales/*.csv
+data/personal_hcdn/*.csv
