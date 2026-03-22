@@ -1,0 +1,41 @@
+name: Actualizar datos Lobby
+
+on:
+  schedule:
+    # Corre todos los lunes a las 6 AM UTC (3 AM Argentina)
+    - cron: '0 6 * * 1'
+  workflow_dispatch:  # Permite ejecutar manualmente
+
+jobs:
+  actualizar:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    
+    - name: Instalar dependencias
+      run: |
+        pip install pandas sqlalchemy psycopg2-binary python-dotenv requests
+    
+    - name: Actualizar datos
+      env:
+        DB_USER: ${{ secrets.DB_USER }}
+        DB_PASS: ${{ secrets.DB_PASS }}
+        DB_HOST: ${{ secrets.DB_HOST }}
+        DB_NAME: ${{ secrets.DB_NAME }}
+      run: |
+        python scripts/ingesta/actualizar_todo.py
+
+    - name: Mostrar estado final
+      env:
+        DB_USER: ${{ secrets.DB_USER }}
+        DB_PASS: ${{ secrets.DB_PASS }}
+        DB_HOST: ${{ secrets.DB_HOST }}
+        DB_NAME: ${{ secrets.DB_NAME }}
+      run: |
+        python scripts/ingesta/actualizar_todo.py --status
