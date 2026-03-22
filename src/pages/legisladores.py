@@ -1,5 +1,7 @@
+'ENDOFFILE'
 """
 Lobby - Página de Legisladores
+Actualizado para usar votos_hcdn (2020-2026)
 """
 import streamlit as st
 import pandas as pd
@@ -30,17 +32,16 @@ def cargar_legisladores(camara=None, solo_vigentes=True):
     if solo_vigentes:
         filtros.append("l.mandato_hasta >= CURRENT_DATE")
     where = "WHERE " + " AND ".join(filtros)
-    
+
     result = db.execute(text(f"""
         SELECT l.id, l.nombre_completo, l.camara,
                COALESCE(l.bloque, '—') as bloque,
                COALESCE(l.distrito, '—') as distrito,
                l.mandato_hasta,
-               COUNT(v.id) as total_votos
+               COALESCE((SELECT COUNT(*) FROM votos_hcdn vh WHERE vh.legislador_id = l.id), 0) +
+               COALESCE((SELECT COUNT(*) FROM votos v WHERE v.legislador_id = l.id), 0) as total_votos
         FROM legisladores l
-        LEFT JOIN votos v ON v.legislador_id = l.id
         {where}
-        GROUP BY l.id, l.nombre_completo, l.camara, l.bloque, l.distrito, l.mandato_hasta
         ORDER BY l.nombre_completo
     """))
     df = pd.DataFrame(result.fetchall(), columns=result.keys())
@@ -51,13 +52,23 @@ def cargar_legisladores(camara=None, solo_vigentes=True):
 @st.cache_data(ttl=3600)
 def cargar_votos_legislador(legislador_id):
     db = SessionLocal()
+    # Combinar votos de ambas tablas
     result = db.execute(text("""
+        SELECT voto as voto_individual, acta_id, fecha, 
+               va.asunto as titulo_acta, va.resultado as resultado_general
+        FROM votos_hcdn vh
+        LEFT JOIN votaciones_hcdn va ON va.acta_id = vh.acta_id
+        WHERE vh.legislador_id = :id
+        
+        UNION ALL
+        
         SELECT v.voto_individual, v.acta_id,
                a.fecha, a.titulo as titulo_acta, a.resultado as resultado_general
         FROM votos v
         LEFT JOIN actas_cabecera a ON a.acta_id = v.acta_id
         WHERE v.legislador_id = :id
-        ORDER BY a.fecha DESC NULLS LAST
+        
+        ORDER BY fecha DESC NULLS LAST
     """), {"id": legislador_id})
     df = pd.DataFrame(result.fetchall(), columns=result.keys())
     db.close()
@@ -85,7 +96,7 @@ def cargar_proyectos_legislador(nombre):
 def cargar_ddjj_legislador(legislador_id):
     db = SessionLocal()
     result = db.execute(text("""
-        SELECT anio, patrimonio_neto, total_bienes, total_deudas, 
+        SELECT anio, patrimonio_neto, total_bienes, total_deudas,
                ingresos_neto_gastos, proveedor_contratista, cuit
         FROM ddjj_legisladores
         WHERE legislador_id = :id
@@ -99,18 +110,19 @@ def cargar_ddjj_legislador(legislador_id):
 @st.cache_data(ttl=3600)
 def calcular_afinidad(legislador_id, top_n=10):
     db = SessionLocal()
+    # Usar votos_hcdn para afinidades (datos más recientes)
     result = db.execute(text("""
         WITH votos_ref AS (
-            SELECT acta_id, voto_individual
-            FROM votos
+            SELECT acta_id, voto
+            FROM votos_hcdn
             WHERE legislador_id = :id AND acta_id IS NOT NULL
         ),
         comparacion AS (
             SELECT
                 v.legislador_id,
                 COUNT(*) as votaciones_compartidas,
-                SUM(CASE WHEN v.voto_individual = r.voto_individual THEN 1 ELSE 0 END) as coincidencias
-            FROM votos v
+                SUM(CASE WHEN v.voto = r.voto THEN 1 ELSE 0 END) as coincidencias
+            FROM votos_hcdn v
             JOIN votos_ref r ON r.acta_id = v.acta_id
             WHERE v.legislador_id != :id AND v.acta_id IS NOT NULL
             GROUP BY v.legislador_id
@@ -136,16 +148,16 @@ def calcular_divergencia(legislador_id, top_n=10):
     db = SessionLocal()
     result = db.execute(text("""
         WITH votos_ref AS (
-            SELECT acta_id, voto_individual
-            FROM votos
+            SELECT acta_id, voto
+            FROM votos_hcdn
             WHERE legislador_id = :id AND acta_id IS NOT NULL
         ),
         comparacion AS (
             SELECT
                 v.legislador_id,
                 COUNT(*) as votaciones_compartidas,
-                SUM(CASE WHEN v.voto_individual = r.voto_individual THEN 1 ELSE 0 END) as coincidencias
-            FROM votos v
+                SUM(CASE WHEN v.voto = r.voto THEN 1 ELSE 0 END) as coincidencias
+            FROM votos_hcdn v
             JOIN votos_ref r ON r.acta_id = v.acta_id
             WHERE v.legislador_id != :id AND v.acta_id IS NOT NULL
             GROUP BY v.legislador_id
@@ -168,7 +180,7 @@ def calcular_divergencia(legislador_id, top_n=10):
 
 def render():
     """Renderiza la página de legisladores"""
-    
+
     st.title("Legisladores")
     st.markdown("<div class='page-subtitle'>Diputados y Senadores · Perfil completo, votaciones y patrimonio</div>", unsafe_allow_html=True)
 
@@ -216,7 +228,7 @@ def render():
         st.markdown("### Seleccionar legislador")
         nombres = df_filtrado['nombre_completo'].tolist()
         seleccionado = st.selectbox("", nombres, label_visibility="collapsed", key="leg_sel")
-        
+
         st.caption(f"Mostrando {min(15, len(df_filtrado))} de {len(df_filtrado)}")
         st.dataframe(
             df_filtrado.head(15)[['nombre_completo', 'bloque', 'camara']].rename(columns={
@@ -230,37 +242,37 @@ def render():
     with col_perfil:
         row = df_filtrado[df_filtrado['nombre_completo'] == seleccionado].iloc[0]
         leg_id = int(row['id'])
-        
+
         st.markdown(f"### {seleccionado}")
-        
+
         col_p1, col_p2, col_p3, col_p4 = st.columns(4)
         col_p1.markdown(f"**Bloque**<br>{row['bloque']}", unsafe_allow_html=True)
         col_p2.markdown(f"**Distrito**<br>{row['distrito']}", unsafe_allow_html=True)
         col_p3.markdown(f"**Cámara**<br>{row['camara']}", unsafe_allow_html=True)
         col_p4.markdown(f"**Votos**<br>{int(row['total_votos']):,}", unsafe_allow_html=True)
-        
+
         # Tabs del perfil
         tabs = st.tabs(["📊 Votaciones", "📋 Proyectos", "💰 Patrimonio", "🤝 Afinidades"])
-        
+
         with tabs[0]:
             df_votos = cargar_votos_legislador(leg_id)
-            
+
             if df_votos.empty:
                 st.info("No hay votos registrados.")
             else:
                 col_v1, col_v2 = st.columns([1, 2])
-                
+
                 with col_v1:
                     dist = df_votos['voto_individual'].value_counts().reset_index()
                     dist.columns = ['Tipo', 'Cantidad']
                     st.markdown("**Distribución**")
-                    
+
                     for _, r in dist.iterrows():
                         tipo = r['Tipo']
                         cant = r['Cantidad']
                         pct = cant / len(df_votos) * 100
                         color = '#059669' if tipo == 'AFIRMATIVO' else '#DC2626' if tipo == 'NEGATIVO' else '#D97706'
-                        
+
                         st.markdown(f"""
                         <div style="margin-bottom: 0.5rem;">
                             <span style="color: {color}; font-weight: 600;">{tipo}</span><br>
@@ -268,16 +280,18 @@ def render():
                             <span style="color: #9CA3AF;"> ({pct:.0f}%)</span>
                         </div>
                         """, unsafe_allow_html=True)
-                
+
                 with col_v2:
                     st.markdown("**Evolución temporal**")
                     df_fecha = df_votos.dropna(subset=['fecha']).copy()
                     if not df_fecha.empty:
-                        df_fecha['fecha'] = pd.to_datetime(df_fecha['fecha'])
-                        df_fecha['año'] = df_fecha['fecha'].dt.year
-                        evolucion = df_fecha.groupby(['año', 'voto_individual']).size().unstack(fill_value=0)
-                        st.bar_chart(evolucion)
-                
+                        df_fecha['fecha'] = pd.to_datetime(df_fecha['fecha'], errors='coerce')
+                        df_fecha = df_fecha.dropna(subset=['fecha'])
+                        if not df_fecha.empty:
+                            df_fecha['año'] = df_fecha['fecha'].dt.year
+                            evolucion = df_fecha.groupby(['año', 'voto_individual']).size().unstack(fill_value=0)
+                            st.bar_chart(evolucion)
+
                 st.markdown("**Últimas votaciones**")
                 df_con_fecha = df_votos.dropna(subset=['fecha']).head(10)
                 if not df_con_fecha.empty:
@@ -287,10 +301,10 @@ def render():
                         }),
                         use_container_width=True, hide_index=True
                     )
-        
+
         with tabs[1]:
             df_proyectos = cargar_proyectos_legislador(seleccionado)
-            
+
             if df_proyectos.empty:
                 st.info("No se encontraron proyectos.")
             else:
@@ -302,10 +316,10 @@ def render():
                     }),
                     use_container_width=True, hide_index=True
                 )
-        
+
         with tabs[2]:
             df_ddjj = cargar_ddjj_legislador(leg_id)
-            
+
             if df_ddjj.empty:
                 st.info("No hay declaración jurada cargada.")
             else:
@@ -316,7 +330,7 @@ def render():
                     ingresos = float(r['ingresos_neto_gastos'] or 0)
                     proveedor = r['proveedor_contratista']
                     cuit = r['cuit']
-                    
+
                     st.markdown(f"""
                     <div class="lobby-card">
                         <div style="display: flex; justify-content: space-between; margin-bottom: 0.8rem;">
@@ -344,14 +358,14 @@ def render():
                         {"<div style='margin-top: 0.8rem;'><span class='lobby-badge lobby-badge-yellow'>Proveedor del Estado</span></div>" if proveedor == 'SI' else ""}
                     </div>
                     """, unsafe_allow_html=True)
-        
+
         with tabs[3]:
             col_af1, col_af2 = st.columns(2)
-            
+
             with col_af1:
                 st.markdown("**Vota más igual con...**")
                 df_afin = calcular_afinidad(leg_id)
-                
+
                 if df_afin.empty:
                     st.info("Sin datos suficientes.")
                 else:
@@ -366,11 +380,11 @@ def render():
                             <div class="ranking-value" style="color: #059669">{r['afinidad_pct']}%</div>
                         </div>
                         """, unsafe_allow_html=True)
-            
+
             with col_af2:
                 st.markdown("**Vota más distinto con...**")
                 df_div = calcular_divergencia(leg_id)
-                
+
                 if df_div.empty:
                     st.info("Sin datos suficientes.")
                 else:
