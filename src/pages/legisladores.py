@@ -50,7 +50,7 @@ def cargar_legisladores(camara=None, solo_vigentes=True):
 def cargar_votos_legislador(legislador_id):
     db = SessionLocal()
     result = db.execute(text("""
-        SELECT voto as voto_individual, acta_id, fecha,
+        SELECT vh.voto as voto_individual, vh.acta_id, va.fecha,
                va.asunto as titulo_acta, va.resultado as resultado_general
         FROM votos_hcdn vh
         LEFT JOIN votaciones_hcdn va ON va.acta_id = vh.acta_id
