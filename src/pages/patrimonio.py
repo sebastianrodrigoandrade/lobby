@@ -261,24 +261,24 @@ def calcular_metricas_evolucion(df_evol, df_indicadores):
     anio_inicial = df['anio'].min()
     anio_final = df['anio'].max()
 
-    pat_inicial = df[df['anio'] == anio_inicial]['patrimonio_promedio'].values[0]
-    pat_final = df[df['anio'] == anio_final]['patrimonio_promedio'].values[0]
+    pat_inicial = float(df[df['anio'] == anio_inicial]['patrimonio_promedio'].values[0])
+    pat_final = float(df[df['anio'] == anio_final]['patrimonio_promedio'].values[0])
 
-    dolar_inicial = df[df['anio'] == anio_inicial]['dolar'].values[0]
-    dolar_final = df[df['anio'] == anio_final]['dolar'].values[0]
+    dolar_inicial = float(df[df['anio'] == anio_inicial]['dolar'].values[0])
+    dolar_final = float(df[df['anio'] == anio_final]['dolar'].values[0])
 
-    ipc_inicial = df[df['anio'] == anio_inicial]['ipc'].values[0]
-    ipc_final = df[df['anio'] == anio_final]['ipc'].values[0]
+    ipc_inicial = float(df[df['anio'] == anio_inicial]['ipc'].values[0])
+    ipc_final = float(df[df['anio'] == anio_final]['ipc'].values[0])
 
     var_nominal = ((pat_final / pat_inicial) - 1) * 100 if pat_inicial else 0
     var_dolar = ((dolar_final / dolar_inicial) - 1) * 100 if dolar_inicial else 0
     inflacion_acum = ((ipc_final / ipc_inicial) - 1) * 100 if ipc_inicial else 0
     var_real = var_nominal - inflacion_acum
 
-    pat_usd_inicial = pat_inicial / float(dolar_inicial) if dolar_inicial else 0
-    pat_usd_final = pat_final / float(dolar_final) if dolar_final else 0
+    pat_usd_inicial = pat_inicial / dolar_inicial if dolar_inicial else 0
+    pat_usd_final = pat_final / dolar_final if dolar_final else 0
     var_usd = ((pat_usd_final / pat_usd_inicial) - 1) * 100 if pat_usd_inicial else 0
-
+    
     return {
         'anio_inicial': anio_inicial,
         'anio_final': anio_final,
