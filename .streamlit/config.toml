@@ -1,9 +1,13 @@
 [theme]
-base = "light"
-primaryColor = "#0F2240"
-backgroundColor = "#F7F7F5"
-secondaryBackgroundColor = "#FFFFFF"
-textColor = "#1a1a1a"
+primaryColor = "#2563EB"
+backgroundColor = "#FAFBFC"
+secondaryBackgroundColor = "#F1F5F9"
+textColor = "#1E293B"
 font = "sans serif"
-[client]
-showSidebarNavigation = true
+
+[server]
+headless = true
+enableCORS = false
+
+[browser]
+gatherUsageStats = false
