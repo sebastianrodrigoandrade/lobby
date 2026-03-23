@@ -217,8 +217,8 @@ def render():
                     help=f"{fecha} · {afirm} ✓ · {neg} ✗ · {badge_text}"
                 ):
                     st.session_state['votacion_seleccionada'] = acta_id
-                    st.switch_page("src/pages/votaciones.py")
-                
+                    st.session_state['menu_selection'] = 'Actividad'
+                    st.rerun()                
                 # Info adicional debajo del botón
                 st.markdown(f"""
                 <div style="margin-top: -0.5rem; margin-bottom: 1rem; padding-left: 1rem; font-size: 0.85rem; color: #6B7280;">
@@ -306,8 +306,8 @@ def render():
                         help=f"{afirm} ✓ vs {neg} ✗ · Diferencia: {dif} votos"
                     ):
                         st.session_state['votacion_seleccionada'] = acta_id
-                        st.switch_page("src/pages/votaciones.py")
-                    
+                        st.session_state['menu_selection'] = 'Actividad'
+                        st.rerun()
                     st.markdown(f"""
                     <div style="margin-top: -0.8rem; margin-bottom: 0.5rem; font-size: 0.8rem; color: #6B7280;">
                         {afirm} ✓ vs {neg} ✗ · <span style="color: #D97706; font-weight: 600;">Δ{dif}</span>
@@ -322,16 +322,19 @@ def render():
 
         # Botones de navegación
         if st.button("🔍 Buscar legislador", use_container_width=True, help="Perfil completo, votaciones, patrimonio"):
-            st.switch_page("src/pages/legisladores.py")
+            st.session_state['menu_selection'] = 'Legisladores'
+            st.rerun()
 
         if st.button("📊 Ranking patrimonial", use_container_width=True, help="Evolución de declaraciones juradas"):
-            st.switch_page("src/pages/patrimonio.py")
-
+            st.session_state['menu_selection'] = 'Patrimonio'
+            st.rerun()
         if st.button("🗳️ Votaciones", use_container_width=True, help="Historial de votaciones nominales"):
-            st.switch_page("src/pages/votaciones.py")
+            st.session_state['menu_selection'] = 'Actividad'
+            st.rerun()
 
         if st.button("📈 Estadísticas", use_container_width=True, help="Métricas y datos agregados"):
-            st.switch_page("src/pages/estadisticas.py")
+            st.session_state['menu_selection'] = 'Estadisticas'
+            st.rerun()  
 
     # Footer con fecha de actualización
     fecha_actualizacion = cargar_fecha_actualizacion()

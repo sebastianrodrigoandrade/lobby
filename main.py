@@ -36,11 +36,23 @@ st.markdown("""
 # NAVEGACIÓN HORIZONTAL
 # ============================================
 
+# Leer selección desde session_state si existe
+menu_options = ["Inicio", "Legisladores", "Actividad", "Patrimonio", "Estadisticas"]
+default_index = 0
+
+if 'menu_selection' in st.session_state:
+    try:
+        default_index = menu_options.index(st.session_state['menu_selection'])
+        # Limpiar después de usar
+        del st.session_state['menu_selection']
+    except ValueError:
+        default_index = 0
+
 selected = option_menu(
     menu_title=None,
-    options=["Inicio", "Legisladores", "Actividad", "Patrimonio", "Estadisticas"],
-    icons=["house", "people", "clipboard-check", "cash-stack", "bar-chart", "gavel"],
-    default_index=0,
+    options=menu_options,
+    icons=["house", "people", "clipboard-check", "cash-stack", "bar-chart"],
+    default_index=default_index,
     orientation="horizontal",
 )
 
@@ -61,5 +73,3 @@ elif selected == "Patrimonio":
     patrimonio.render()
 elif selected == "Estadisticas":
     estadisticas.render()
-# elif selected == "Causas":
-#     causas.render()
