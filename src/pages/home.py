@@ -43,7 +43,9 @@ def cargar_ultimas_sesiones(limit=3):
         FROM sesiones
         WHERE fecha IS NOT NULL
           AND duracion_horas IS NOT NULL
-          AND duracion_horas > 0
+          AND duracion_horas != ''
+          AND duracion_horas ~ '^[0-9.]+$'
+          AND duracion_horas::numeric > 0
           AND tipo_periodo IS NOT NULL
           AND tipo_periodo != ''
         ORDER BY fecha DESC
