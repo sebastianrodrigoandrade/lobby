@@ -4,7 +4,6 @@ Archivo principal con navegación horizontal
 """
 import streamlit as st
 
-
 st.set_page_config(
     page_title="Lobby · Inteligencia Pública",
     page_icon="🏛️",
@@ -36,17 +35,22 @@ st.markdown("""
 # NAVEGACIÓN HORIZONTAL
 # ============================================
 
-# Leer selección desde session_state si existe
 menu_options = ["Inicio", "Legisladores", "Actividad", "Patrimonio", "Estadisticas"]
-default_index = 0
 
+# Inicializar el estado del menú si no existe
+if 'current_page' not in st.session_state:
+    st.session_state['current_page'] = "Inicio"
+
+# Si viene una redirección desde otra página
 if 'menu_selection' in st.session_state:
-    try:
-        default_index = menu_options.index(st.session_state['menu_selection'])
-        # Limpiar después de usar
-        del st.session_state['menu_selection']
-    except ValueError:
-        default_index = 0
+    st.session_state['current_page'] = st.session_state['menu_selection']
+    del st.session_state['menu_selection']
+
+# Calcular el índice default basado en la página actual
+try:
+    default_index = menu_options.index(st.session_state['current_page'])
+except ValueError:
+    default_index = 0
 
 selected = option_menu(
     menu_title=None,
@@ -54,7 +58,11 @@ selected = option_menu(
     icons=["house", "people", "clipboard-check", "cash-stack", "bar-chart"],
     default_index=default_index,
     orientation="horizontal",
+    key="main_menu"
 )
+
+# Guardar la selección actual
+st.session_state['current_page'] = selected
 
 # Espaciado
 st.markdown("<div style='height: 1rem'></div>", unsafe_allow_html=True)
