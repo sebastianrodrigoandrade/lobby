@@ -300,7 +300,13 @@ def grafico_evolucion_comparativa(df_evol, df_indicadores, titulo="Evolucion Pat
     if df.empty or len(df) < 2:
         return None
 
+    # Convertir a float para evitar errores con Decimal
+    df['patrimonio_promedio'] = df['patrimonio_promedio'].astype(float)
+    df['ipc'] = df['ipc'].astype(float)
+    df['dolar'] = df['dolar'].astype(float)
+
     # Calcular indices base 100
+    base = df.iloc[0]
     base = df.iloc[0]
     df['pat_idx'] = (df['patrimonio_promedio'] / base['patrimonio_promedio']) * 100
     df['ipc_idx'] = (df['ipc'] / base['ipc']) * 100
@@ -353,8 +359,9 @@ def grafico_patrimonio_usd(df_evol, df_indicadores, titulo="Patrimonio en USD"):
     if df.empty or len(df) < 2:
         return None
 
-    df['patrimonio_usd'] = df['patrimonio_promedio'] / df['dolar'].astype(float)
-
+    df['patrimonio_promedio'] = df['patrimonio_promedio'].astype(float)
+    df['dolar'] = df['dolar'].astype(float)
+    df['patrimonio_usd'] = df['patrimonio_promedio'] / df['dolar']
     fig = go.Figure()
 
     fig.add_trace(go.Scatter(
