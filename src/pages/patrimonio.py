@@ -619,60 +619,60 @@ def render():
 # NIVEL 2: POR CAMARA
 # ========================================
 
-st.markdown("---")
-st.markdown("## Por Cámara")
-st.caption("Se muestra la **mediana** (valor del medio) que es más representativa que el promedio cuando hay patrimonios muy altos que distorsionan.")
+    st.markdown("---")
+    st.markdown("## Por Cámara")
+    st.caption("Se muestra la **mediana** (valor del medio) que es más representativa que el promedio cuando hay patrimonios muy altos que distorsionan.")
 
-df_camara = cargar_evolucion_por_camara()
-df_camara_filtrado = df_camara[(df_camara['anio'] >= anio_desde) & (df_camara['anio'] <= anio_hasta)]
+    df_camara = cargar_evolucion_por_camara()
+    df_camara_filtrado = df_camara[(df_camara['anio'] >= anio_desde) & (df_camara['anio'] <= anio_hasta)]
 
-if not df_camara_filtrado.empty:
-    ultimo_anio_cam = int(df_camara_filtrado['anio'].max())
-    primer_anio_cam = int(df_camara_filtrado['anio'].min())
-    df_ultimo_cam = df_camara_filtrado[df_camara_filtrado['anio'] == ultimo_anio_cam]
-    df_primer_cam = df_camara_filtrado[df_camara_filtrado['anio'] == primer_anio_cam]
+    if not df_camara_filtrado.empty:
+        ultimo_anio_cam = int(df_camara_filtrado['anio'].max())
+        primer_anio_cam = int(df_camara_filtrado['anio'].min())
+        df_ultimo_cam = df_camara_filtrado[df_camara_filtrado['anio'] == ultimo_anio_cam]
+        df_primer_cam = df_camara_filtrado[df_camara_filtrado['anio'] == primer_anio_cam]
 
-    col1, col2 = st.columns(2)
+        col1, col2 = st.columns(2)
 
-    for idx, camara in enumerate(['Diputados', 'Senadores']):
-        datos_ultimo = df_ultimo_cam[df_ultimo_cam['camara'] == camara]
-        datos_primer = df_primer_cam[df_primer_cam['camara'] == camara]
+        for idx, camara in enumerate(['Diputados', 'Senadores']):
+            datos_ultimo = df_ultimo_cam[df_ultimo_cam['camara'] == camara]
+            datos_primer = df_primer_cam[df_primer_cam['camara'] == camara]
 
-        with [col1, col2][idx]:
-            if not datos_ultimo.empty and not datos_primer.empty:
-                mediana_final = float(datos_ultimo['mediana'].values[0])
-                mediana_inicial = float(datos_primer['mediana'].values[0])
-                legisladores = int(datos_ultimo['legisladores'].values[0])
-                 
-                # Calcular variación real de la mediana
-                ipc_inicial = float(df_indicadores.loc[primer_anio_cam, 'ipc']) if primer_anio_cam in df_indicadores.index else None
-                ipc_final = float(df_indicadores.loc[ultimo_anio_cam, 'ipc']) if ultimo_anio_cam in df_indicadores.index else None
-                
-                if ipc_inicial and ipc_final and mediana_inicial > 0:
-                    ratio_mediana = mediana_final / mediana_inicial
-                    ratio_inflacion = ipc_final / ipc_inicial
-                    var_real_mediana = ((ratio_mediana / ratio_inflacion) - 1) * 100
-                    gano = var_real_mediana > 0
-                else:
-                    var_real_mediana = None
-                    gano = None
-                st.markdown(f"### {camara}")
-                st.metric(
-                    f"Mediana patrimonial ({ultimo_anio_cam})", 
-                    fmt_pesos(mediana_final),
-                    help="Valor del medio: 50% declara menos y 50% declara más"
-                )
-                st.caption(f"{legisladores} legisladores con DDJJ")
+            with [col1, col2][idx]:
+                if not datos_ultimo.empty and not datos_primer.empty:
+                    mediana_final = float(datos_ultimo['mediana'].values[0])
+                    mediana_inicial = float(datos_primer['mediana'].values[0])
+                    legisladores = int(datos_ultimo['legisladores'].values[0])
+                    
+                    # Calcular variación real de la mediana
+                    ipc_inicial = float(df_indicadores.loc[primer_anio_cam, 'ipc']) if primer_anio_cam in df_indicadores.index else None
+                    ipc_final = float(df_indicadores.loc[ultimo_anio_cam, 'ipc']) if ultimo_anio_cam in df_indicadores.index else None
+                    
+                    if ipc_inicial and ipc_final and mediana_inicial > 0:
+                        ratio_mediana = mediana_final / mediana_inicial
+                        ratio_inflacion = ipc_final / ipc_inicial
+                        var_real_mediana = ((ratio_mediana / ratio_inflacion) - 1) * 100
+                        gano = var_real_mediana > 0
+                    else:
+                        var_real_mediana = None
+                        gano = None
+                    st.markdown(f"### {camara}")
+                    st.metric(
+                        f"Mediana patrimonial ({ultimo_anio_cam})", 
+                        fmt_pesos(mediana_final),
+                        help="Valor del medio: 50% declara menos y 50% declara más"
+                    )
+                    st.caption(f"{legisladores} legisladores con DDJJ")
 
-                if var_real_mediana is not None:
-                    color = "#059669" if gano else "#DC2626"
-                    texto = "Ganó" if gano else "Perdió"
-                    st.markdown(f"""
-                    <div style="padding: 0.5rem; background: {'#ECFDF5' if gano else '#FEF2F2'}; border-radius: 8px; margin-top: 0.5rem;">
-                        <span style="color: {color}; font-weight: 600;">{texto} vs inflación: {var_real_mediana:+.1f}%</span>
-                        <br><span style="font-size: 0.8rem; color: #6B7280;">Mediana {primer_anio_cam}: {fmt_pesos(mediana_inicial)} → {ultimo_anio_cam}: {fmt_pesos(mediana_final)}</span>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    if var_real_mediana is not None:
+                        color = "#059669" if gano else "#DC2626"
+                        texto = "Ganó" if gano else "Perdió"
+                        st.markdown(f"""
+                        <div style="padding: 0.5rem; background: {'#ECFDF5' if gano else '#FEF2F2'}; border-radius: 8px; margin-top: 0.5rem;">
+                            <span style="color: {color}; font-weight: 600;">{texto} vs inflación: {var_real_mediana:+.1f}%</span>
+                            <br><span style="font-size: 0.8rem; color: #6B7280;">Mediana {primer_anio_cam}: {fmt_pesos(mediana_inicial)} → {ultimo_anio_cam}: {fmt_pesos(mediana_final)}</span>
+                        </div>
+                        """, unsafe_allow_html=True)
 
     # ========================================
     # NIVEL 3: POR BLOQUE
