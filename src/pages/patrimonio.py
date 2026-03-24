@@ -327,9 +327,20 @@ def calcular_metricas_evolucion(df_evol, df_indicadores, anio_inicial=None, anio
     ipc_inicial = float(df_inicial['ipc'].values[0])
     ipc_final = float(df_final['ipc'].values[0])
 
-    var_nominal = ((pat_final / pat_inicial) - 1) * 100 if pat_inicial else 0
-    inflacion_acum = ((ipc_final / ipc_inicial) - 1) * 100 if ipc_inicial else 0
-    var_real = var_nominal - inflacion_acum
+    # Calcular variaciones como ratios
+    ratio_patrimonio = pat_final / pat_inicial if pat_inicial else 1
+    ratio_inflacion = ipc_final / ipc_inicial if ipc_inicial else 1
+    ratio_dolar = dolar_final / dolar_inicial if dolar_inicial else 1
+
+    # Variación nominal (en porcentaje)
+    var_nominal = (ratio_patrimonio - 1) * 100
+
+    # Inflación acumulada del período (en porcentaje)
+    inflacion_acum = (ratio_inflacion - 1) * 100
+
+    # Variación REAL: cuánto ganó/perdió en términos de poder adquisitivo
+    # Fórmula: (1 + rendimiento) / (1 + inflación) - 1
+    var_real = ((ratio_patrimonio / ratio_inflacion) - 1) * 100
 
     pat_usd_inicial = pat_inicial / dolar_inicial if dolar_inicial else 0
     pat_usd_final = pat_final / dolar_final if dolar_final else 0
@@ -462,7 +473,7 @@ def mostrar_metricas(metricas):
             fmt_pct(metricas['var_real']),
             delta="Ganó poder adquisitivo" if metricas['gano_inflacion'] else "Perdió poder adquisitivo",
             delta_color="normal" if metricas['gano_inflacion'] else "inverse",
-            help=f"Variación nominal ({metricas['var_nominal']:+.1f}%) menos inflación acumulada ({metricas['inflacion_acum']:+.1f}%). Positivo = ganó poder adquisitivo"
+            help=f"Patrimonio ajustado por inflación. El patrimonio creció {metricas['var_nominal']:+.1f}% y la inflación fue {metricas['inflacion_acum']:+.1f}%. En términos reales: {metricas['var_real']:+.1f}%"
         )
 
     with col3:
