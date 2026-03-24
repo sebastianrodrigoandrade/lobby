@@ -2,6 +2,7 @@
 """
 Lobby - Pagina de Patrimonio
 Flujo: General -> Camara -> Bloque -> Legislador
+Solo legisladores con patrimonio > 0
 """
 import streamlit as st
 import pandas as pd
@@ -17,12 +18,12 @@ URL_BUSCADOR = "https://djci.oac.uncoma.edu.ar/consulta.php"
 # ============================================
 
 def fmt_pesos(valor):
-    if pd.isna(valor) or valor is None:
+    if pd.isna(valor) or valor is None or valor == 0:
         return "-"
     return f"${valor:,.0f}".replace(",", ".")
 
 def fmt_usd(valor):
-    if pd.isna(valor) or valor is None:
+    if pd.isna(valor) or valor is None or valor == 0:
         return "-"
     return f"USD {valor:,.0f}".replace(",", ".")
 
@@ -44,6 +45,9 @@ def cargar_indicadores():
             FROM indicadores_anuales ORDER BY anio
         """))
         df = pd.DataFrame(result.fetchall(), columns=['anio', 'dolar', 'ipc', 'inflacion'])
+        # Convertir a float
+        for col in ['dolar', 'ipc', 'inflacion']:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
         return df.set_index('anio')
     except:
         return pd.DataFrame()
@@ -51,46 +55,95 @@ def cargar_indicadores():
         db.close()
 
 @st.cache_data(ttl=3600)
-def cargar_evolucion_general():
-    """Carga evolucion patrimonial general (todos los legisladores)."""
+def cargar_anios_disponibles():
+    """Retorna los años con DDJJ disponibles."""
     db = SessionLocal()
     try:
         result = db.execute(text("""
-            SELECT
-                anio,
-                COUNT(*) as legisladores,
-                AVG(patrimonio_neto) as patrimonio_promedio,
-                SUM(patrimonio_neto) as patrimonio_total,
-                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY patrimonio_neto) as mediana
-            FROM ddjj_legisladores
-            WHERE patrimonio_neto IS NOT NULL AND patrimonio_neto > 0
-            GROUP BY anio
+            SELECT DISTINCT anio FROM ddjj_legisladores
+            WHERE patrimonio_neto > 0
             ORDER BY anio
         """))
-        return pd.DataFrame(result.fetchall(), columns=['anio', 'legisladores', 'patrimonio_promedio', 'patrimonio_total', 'mediana'])
+        return [row[0] for row in result.fetchall()]
     finally:
         db.close()
 
 @st.cache_data(ttl=3600)
-def cargar_evolucion_por_camara():
+def cargar_evolucion_general(solo_vigentes=False):
+    """Carga evolucion patrimonial general."""
+    db = SessionLocal()
+    try:
+        if solo_vigentes:
+            query = """
+                SELECT
+                    d.anio,
+                    COUNT(*) as legisladores,
+                    AVG(d.patrimonio_neto) as patrimonio_promedio,
+                    SUM(d.patrimonio_neto) as patrimonio_total,
+                    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY d.patrimonio_neto) as mediana
+                FROM ddjj_legisladores d
+                JOIN legisladores l ON d.legislador_id = l.id
+                WHERE d.patrimonio_neto > 0
+                  AND l.mandato_hasta >= CURRENT_DATE
+                GROUP BY d.anio
+                ORDER BY d.anio
+            """
+        else:
+            query = """
+                SELECT
+                    anio,
+                    COUNT(*) as legisladores,
+                    AVG(patrimonio_neto) as patrimonio_promedio,
+                    SUM(patrimonio_neto) as patrimonio_total,
+                    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY patrimonio_neto) as mediana
+                FROM ddjj_legisladores
+                WHERE patrimonio_neto > 0
+                GROUP BY anio
+                ORDER BY anio
+            """
+        result = db.execute(text(query))
+        df = pd.DataFrame(result.fetchall(), columns=['anio', 'legisladores', 'patrimonio_promedio', 'patrimonio_total', 'mediana'])
+        # Convertir a float
+        for col in ['patrimonio_promedio', 'patrimonio_total', 'mediana']:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+        return df
+    finally:
+        db.close()
+
+@st.cache_data(ttl=3600)
+def cargar_evolucion_por_camara(solo_vigentes=False):
     """Carga evolucion patrimonial por camara."""
     db = SessionLocal()
     try:
-        result = db.execute(text("""
-            SELECT
-                anio,
-                CASE
-                    WHEN organismo ILIKE '%SENADO%' THEN 'Senadores'
-                    ELSE 'Diputados'
-                END as camara,
-                COUNT(*) as legisladores,
-                AVG(patrimonio_neto) as patrimonio_promedio
-            FROM ddjj_legisladores
-            WHERE patrimonio_neto IS NOT NULL AND patrimonio_neto > 0
-            GROUP BY anio, camara
-            ORDER BY anio, camara
-        """))
-        return pd.DataFrame(result.fetchall(), columns=['anio', 'camara', 'legisladores', 'patrimonio_promedio'])
+        if solo_vigentes:
+            query = """
+                SELECT
+                    d.anio,
+                    CASE WHEN d.organismo ILIKE '%SENADO%' THEN 'Senadores' ELSE 'Diputados' END as camara,
+                    COUNT(*) as legisladores,
+                    AVG(d.patrimonio_neto) as patrimonio_promedio
+                FROM ddjj_legisladores d
+                JOIN legisladores l ON d.legislador_id = l.id
+                WHERE d.patrimonio_neto > 0 AND l.mandato_hasta >= CURRENT_DATE
+                GROUP BY d.anio, camara
+                ORDER BY d.anio, camara
+            """
+        else:
+            query = """
+                SELECT
+                    anio,
+                    CASE WHEN organismo ILIKE '%SENADO%' THEN 'Senadores' ELSE 'Diputados' END as camara,
+                    COUNT(*) as legisladores,
+                    AVG(patrimonio_neto) as patrimonio_promedio
+                FROM ddjj_legisladores
+                WHERE patrimonio_neto > 0
+                GROUP BY anio, camara
+                ORDER BY anio, camara
+            """
+        result = db.execute(text(query))
+        df = pd.DataFrame(result.fetchall(), columns=['anio', 'camara', 'legisladores', 'patrimonio_promedio'])
+        df['patrimonio_promedio'] = pd.to_numeric(df['patrimonio_promedio'], errors='coerce')
+        return df
     finally:
         db.close()
 
@@ -106,11 +159,13 @@ def cargar_evolucion_por_bloque(bloque):
                 AVG(d.patrimonio_neto) as patrimonio_promedio
             FROM ddjj_legisladores d
             JOIN legisladores l ON d.legislador_id = l.id
-            WHERE d.patrimonio_neto IS NOT NULL AND d.patrimonio_neto > 0 AND l.bloque = :bloque
+            WHERE d.patrimonio_neto > 0 AND l.bloque = :bloque
             GROUP BY d.anio
             ORDER BY d.anio
         """), {'bloque': bloque})
-        return pd.DataFrame(result.fetchall(), columns=['anio', 'legisladores', 'patrimonio_promedio'])
+        df = pd.DataFrame(result.fetchall(), columns=['anio', 'legisladores', 'patrimonio_promedio'])
+        df['patrimonio_promedio'] = pd.to_numeric(df['patrimonio_promedio'], errors='coerce')
+        return df
     finally:
         db.close()
 
@@ -132,38 +187,36 @@ def cargar_bloques_con_ddjj():
         db.close()
 
 @st.cache_data(ttl=3600)
-def cargar_legisladores_con_ddjj(bloque=None, camara=None):
-    """Lista de legisladores con DDJJ, opcionalmente filtrados."""
+def cargar_legisladores_con_ddjj(camara=None):
+    """Lista de legisladores con DDJJ."""
     db = SessionLocal()
     try:
-        where = ["patrimonio_neto IS NOT NULL", "patrimonio_neto > 0"]
-        params = {}
-
-        if camara:
+        where = ["d.patrimonio_neto > 0", "d.legislador_id IS NOT NULL"]
+        if camara and camara != "Todas":
             if camara == "Diputados":
-                where.append("organismo ILIKE '%DIPUTADOS%'")
-            elif camara == "Senadores":
-                where.append("organismo ILIKE '%SENADO%'")
-
+                where.append("d.organismo ILIKE '%DIPUTADOS%'")
+            else:
+                where.append("d.organismo ILIKE '%SENADO%'")
+        
         where_sql = " AND ".join(where)
-
+        
         result = db.execute(text(f"""
             SELECT
-                cuit,
-                funcionario_apellido_nombre as nombre,
-                CASE
-                    WHEN organismo ILIKE '%SENADO%' THEN 'Senadores'
-                    ELSE 'Diputados'
-                END as camara,
-                COUNT(DISTINCT anio) as anios_ddjj,
-                MAX(patrimonio_neto) as ultimo_patrimonio
-            FROM ddjj_legisladores
+                d.cuit,
+                d.funcionario_apellido_nombre as nombre,
+                CASE WHEN d.organismo ILIKE '%SENADO%' THEN 'Senadores' ELSE 'Diputados' END as camara,
+                l.bloque,
+                COUNT(DISTINCT d.anio) as anios_ddjj,
+                MAX(d.patrimonio_neto) as ultimo_patrimonio,
+                d.legislador_id
+            FROM ddjj_legisladores d
+            LEFT JOIN legisladores l ON d.legislador_id = l.id
             WHERE {where_sql}
-            GROUP BY cuit, funcionario_apellido_nombre, organismo
+            GROUP BY d.cuit, d.funcionario_apellido_nombre, d.organismo, l.bloque, d.legislador_id
             ORDER BY ultimo_patrimonio DESC
-        """), params)
-        df = pd.DataFrame(result.fetchall(), columns=['cuit', 'nombre', 'camara', 'anios_ddjj', 'ultimo_patrimonio'])
-        df['bloque'] = None
+        """))
+        df = pd.DataFrame(result.fetchall(), columns=['cuit', 'nombre', 'camara', 'bloque', 'anios_ddjj', 'ultimo_patrimonio', 'legislador_id'])
+        df['ultimo_patrimonio'] = pd.to_numeric(df['ultimo_patrimonio'], errors='coerce')
         return df
     finally:
         db.close()
@@ -176,10 +229,13 @@ def cargar_serie_legislador(cuit):
         result = db.execute(text("""
             SELECT anio, patrimonio_neto, total_bienes, total_deudas, tipo_declaracion
             FROM ddjj_legisladores
-            WHERE cuit = :cuit AND patrimonio_neto IS NOT NULL
+            WHERE cuit = :cuit AND patrimonio_neto > 0
             ORDER BY anio
         """), {'cuit': cuit})
-        return pd.DataFrame(result.fetchall(), columns=['anio', 'patrimonio_neto', 'total_bienes', 'total_deudas', 'tipo_declaracion'])
+        df = pd.DataFrame(result.fetchall(), columns=['anio', 'patrimonio_neto', 'total_bienes', 'total_deudas', 'tipo_declaracion'])
+        for col in ['patrimonio_neto', 'total_bienes', 'total_deudas']:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+        return df
     finally:
         db.close()
 
@@ -188,43 +244,38 @@ def cargar_ranking_patrimonio(anio=None, camara=None, limit=20):
     """Ranking de legisladores por patrimonio."""
     db = SessionLocal()
     try:
-        where = ["patrimonio_neto IS NOT NULL", "patrimonio_neto > 0"]
-        params = {}
-
+        where = ["patrimonio_neto > 0"]
+        params = {'limit': limit}
+        
         if anio:
             where.append("anio = :anio")
-            params['anio'] = anio
-        if camara:
+            params['anio'] = int(anio)
+        if camara and camara != "Todas":
             if camara == "Diputados":
                 where.append("organismo ILIKE '%DIPUTADOS%'")
-            elif camara == "Senadores":
+            else:
                 where.append("organismo ILIKE '%SENADO%'")
         
         where_sql = " AND ".join(where)
         
         if anio:
-            result = db.execute(text(f"""
+            query = f"""
                 SELECT 
                     funcionario_apellido_nombre as nombre,
-                    CASE 
-                        WHEN organismo ILIKE '%SENADO%' THEN 'Senadores'
-                        ELSE 'Diputados'
-                    END as camara,
+                    CASE WHEN organismo ILIKE '%SENADO%' THEN 'Senadores' ELSE 'Diputados' END as camara,
                     patrimonio_neto,
                     anio
                 FROM ddjj_legisladores
                 WHERE {where_sql}
                 ORDER BY patrimonio_neto DESC
-            """), params)
+                LIMIT :limit
+            """
         else:
-            result = db.execute(text(f"""
+            query = f"""
                 SELECT nombre, camara, patrimonio_neto, anio FROM (
                     SELECT DISTINCT ON (cuit)
                         funcionario_apellido_nombre as nombre,
-                        CASE 
-                            WHEN organismo ILIKE '%SENADO%' THEN 'Senadores'
-                            ELSE 'Diputados'
-                        END as camara,
+                        CASE WHEN organismo ILIKE '%SENADO%' THEN 'Senadores' ELSE 'Diputados' END as camara,
                         patrimonio_neto,
                         anio
                     FROM ddjj_legisladores
@@ -232,13 +283,12 @@ def cargar_ranking_patrimonio(anio=None, camara=None, limit=20):
                     ORDER BY cuit, anio DESC
                 ) sub
                 ORDER BY patrimonio_neto DESC
-            """), params)
-
+                LIMIT :limit
+            """
+        
+        result = db.execute(text(query), params)
         df = pd.DataFrame(result.fetchall(), columns=['nombre', 'camara', 'patrimonio_neto', 'anio'])
-        if not df.empty:
-            df['patrimonio_neto'] = pd.to_numeric(df['patrimonio_neto'], errors='coerce')
-            df = df.dropna(subset=['patrimonio_neto'])
-            df = df.nlargest(limit, 'patrimonio_neto')
+        df['patrimonio_neto'] = pd.to_numeric(df['patrimonio_neto'], errors='coerce')
         return df
     finally:
         db.close()
@@ -247,7 +297,7 @@ def cargar_ranking_patrimonio(anio=None, camara=None, limit=20):
 # FUNCIONES DE VISUALIZACION
 # ============================================
 
-def calcular_metricas_evolucion(df_evol, df_indicadores):
+def calcular_metricas_evolucion(df_evol, df_indicadores, anio_inicial=None, anio_final=None):
     """Calcula metricas de evolucion patrimonial vs indicadores."""
     if df_evol.empty or df_indicadores.empty:
         return None
@@ -258,30 +308,38 @@ def calcular_metricas_evolucion(df_evol, df_indicadores):
     if len(df) < 2:
         return None
 
-    anio_inicial = df['anio'].min()
-    anio_final = df['anio'].max()
+    # Usar años especificados o los extremos disponibles
+    if anio_inicial is None:
+        anio_inicial = int(df['anio'].min())
+    if anio_final is None:
+        anio_final = int(df['anio'].max())
+    
+    df_inicial = df[df['anio'] == anio_inicial]
+    df_final = df[df['anio'] == anio_final]
+    
+    if df_inicial.empty or df_final.empty:
+        return None
 
-    pat_inicial = float(df[df['anio'] == anio_inicial]['patrimonio_promedio'].values[0])
-    pat_final = float(df[df['anio'] == anio_final]['patrimonio_promedio'].values[0])
-
-    dolar_inicial = float(df[df['anio'] == anio_inicial]['dolar'].values[0])
-    dolar_final = float(df[df['anio'] == anio_final]['dolar'].values[0])
-
-    ipc_inicial = float(df[df['anio'] == anio_inicial]['ipc'].values[0])
-    ipc_final = float(df[df['anio'] == anio_final]['ipc'].values[0])
+    pat_inicial = float(df_inicial['patrimonio_promedio'].values[0])
+    pat_final = float(df_final['patrimonio_promedio'].values[0])
+    dolar_inicial = float(df_inicial['dolar'].values[0])
+    dolar_final = float(df_final['dolar'].values[0])
+    ipc_inicial = float(df_inicial['ipc'].values[0])
+    ipc_final = float(df_final['ipc'].values[0])
 
     var_nominal = ((pat_final / pat_inicial) - 1) * 100 if pat_inicial else 0
-    var_dolar = ((dolar_final / dolar_inicial) - 1) * 100 if dolar_inicial else 0
     inflacion_acum = ((ipc_final / ipc_inicial) - 1) * 100 if ipc_inicial else 0
     var_real = var_nominal - inflacion_acum
 
     pat_usd_inicial = pat_inicial / dolar_inicial if dolar_inicial else 0
     pat_usd_final = pat_final / dolar_final if dolar_final else 0
     var_usd = ((pat_usd_final / pat_usd_inicial) - 1) * 100 if pat_usd_inicial else 0
-    
+
     return {
         'anio_inicial': anio_inicial,
         'anio_final': anio_final,
+        'pat_inicial': pat_inicial,
+        'pat_final': pat_final,
         'var_nominal': var_nominal,
         'inflacion_acum': inflacion_acum,
         'var_real': var_real,
@@ -300,17 +358,16 @@ def grafico_evolucion_comparativa(df_evol, df_indicadores, titulo="Evolucion Pat
     if df.empty or len(df) < 2:
         return None
 
-    # Convertir a float para evitar errores con Decimal
-    df['patrimonio_promedio'] = df['patrimonio_promedio'].astype(float)
-    df['ipc'] = df['ipc'].astype(float)
-    df['dolar'] = df['dolar'].astype(float)
+    # Convertir a float
+    df['patrimonio_promedio'] = pd.to_numeric(df['patrimonio_promedio'], errors='coerce')
+    df['ipc'] = pd.to_numeric(df['ipc'], errors='coerce')
+    df['dolar'] = pd.to_numeric(df['dolar'], errors='coerce')
 
     # Calcular indices base 100
     base = df.iloc[0]
-    base = df.iloc[0]
-    df['pat_idx'] = (df['patrimonio_promedio'] / base['patrimonio_promedio']) * 100
-    df['ipc_idx'] = (df['ipc'] / base['ipc']) * 100
-    df['dolar_idx'] = (df['dolar'] / base['dolar']) * 100
+    df['pat_idx'] = (df['patrimonio_promedio'] / float(base['patrimonio_promedio'])) * 100
+    df['ipc_idx'] = (df['ipc'] / float(base['ipc'])) * 100
+    df['dolar_idx'] = (df['dolar'] / float(base['dolar'])) * 100
 
     fig = go.Figure()
 
@@ -323,14 +380,14 @@ def grafico_evolucion_comparativa(df_evol, df_indicadores, titulo="Evolucion Pat
 
     fig.add_trace(go.Scatter(
         x=df['anio'], y=df['ipc_idx'],
-        name='Inflacion (IPC)',
+        name='Inflación (IPC)',
         line=dict(color='#DC2626', width=2, dash='dash'),
         mode='lines+markers'
     ))
 
     fig.add_trace(go.Scatter(
         x=df['anio'], y=df['dolar_idx'],
-        name='Dolar',
+        name='Dólar',
         line=dict(color='#059669', width=2, dash='dot'),
         mode='lines+markers'
     ))
@@ -340,7 +397,7 @@ def grafico_evolucion_comparativa(df_evol, df_indicadores, titulo="Evolucion Pat
     fig.update_layout(
         title=titulo,
         xaxis_title="Año",
-        yaxis_title="Indice (Base 100 = primer año)",
+        yaxis_title="Índice (Base 100 = primer año)",
         hovermode='x unified',
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         template="plotly_white",
@@ -359,9 +416,10 @@ def grafico_patrimonio_usd(df_evol, df_indicadores, titulo="Patrimonio en USD"):
     if df.empty or len(df) < 2:
         return None
 
-    df['patrimonio_promedio'] = df['patrimonio_promedio'].astype(float)
-    df['dolar'] = df['dolar'].astype(float)
+    df['patrimonio_promedio'] = pd.to_numeric(df['patrimonio_promedio'], errors='coerce')
+    df['dolar'] = pd.to_numeric(df['dolar'], errors='coerce')
     df['patrimonio_usd'] = df['patrimonio_promedio'] / df['dolar']
+
     fig = go.Figure()
 
     fig.add_trace(go.Scatter(
@@ -385,7 +443,7 @@ def grafico_patrimonio_usd(df_evol, df_indicadores, titulo="Patrimonio en USD"):
     return fig
 
 def mostrar_metricas(metricas):
-    """Muestra metricas de evolucion patrimonial con explicacion clara."""
+    """Muestra metricas de evolucion patrimonial."""
     if not metricas:
         return
 
@@ -393,26 +451,25 @@ def mostrar_metricas(metricas):
 
     with col1:
         st.metric(
-            f"Variacion nominal ({metricas['anio_inicial']}-{metricas['anio_final']})",
+            f"Var. nominal ({metricas['anio_inicial']}-{metricas['anio_final']})",
             fmt_pct(metricas['var_nominal']),
-            help="Cambio porcentual del patrimonio en pesos"
+            help="Cambio porcentual del patrimonio promedio en pesos argentinos entre los años seleccionados"
         )
 
     with col2:
-        color = "green" if metricas['gano_inflacion'] else "red"
         st.metric(
-            "Variacion real (vs inflacion)",
+            "Var. real (descontando inflación)",
             fmt_pct(metricas['var_real']),
-            delta=f"{'Gano' if metricas['gano_inflacion'] else 'Perdio'} contra inflacion",
+            delta="Ganó poder adquisitivo" if metricas['gano_inflacion'] else "Perdió poder adquisitivo",
             delta_color="normal" if metricas['gano_inflacion'] else "inverse",
-            help="Variacion nominal menos inflacion acumulada. Positivo = gano poder adquisitivo"
+            help=f"Variación nominal ({metricas['var_nominal']:+.1f}%) menos inflación acumulada ({metricas['inflacion_acum']:+.1f}%). Positivo = ganó poder adquisitivo"
         )
 
     with col3:
         st.metric(
-            "Variacion en USD",
+            "Var. en dólares",
             fmt_pct(metricas['var_usd']),
-            help="Cambio porcentual del patrimonio medido en dolares"
+            help="Cambio porcentual del patrimonio medido en dólares estadounidenses"
         )
 
 # ============================================
@@ -424,111 +481,165 @@ def render():
 
     st.markdown("<div style='height: 1.5rem'></div>", unsafe_allow_html=True)
     st.title("Patrimonio de Legisladores")
-    st.markdown("<div class='page-subtitle'>Evolucion patrimonial basada en declaraciones juradas</div>", unsafe_allow_html=True)
+    st.markdown("<div class='page-subtitle'>Evolución patrimonial basada en declaraciones juradas de la Oficina Anticorrupción</div>", unsafe_allow_html=True)
 
     # Cargar datos base
     df_indicadores = cargar_indicadores()
-    df_general = cargar_evolucion_general()
-
-    if df_general.empty:
+    anios_disponibles = cargar_anios_disponibles()
+    
+    if not anios_disponibles:
         st.warning("No hay datos de declaraciones juradas disponibles.")
         return
 
     # ========================================
-    # FILTRO GLOBAL DE PERIODO
+    # FILTROS GLOBALES
     # ========================================
     
-    anios_disponibles = sorted(df_general['anio'].unique())
+    st.markdown("### Configuración del análisis")
     
-    col_filtro1, col_filtro2, _ = st.columns([1, 1, 2])
-    with col_filtro1:
-        anio_desde = st.selectbox("Desde", anios_disponibles, index=0, key="filtro_desde")
-    with col_filtro2:
+    col_f1, col_f2, col_f3 = st.columns([1, 1, 2])
+    
+    with col_f1:
+        anio_desde = st.selectbox(
+            "Año inicial", 
+            anios_disponibles, 
+            index=0,
+            help="Año base para calcular variaciones"
+        )
+    
+    with col_f2:
         anios_hasta = [a for a in anios_disponibles if a >= anio_desde]
-        anio_hasta = st.selectbox("Hasta", anios_hasta, index=len(anios_hasta)-1, key="filtro_hasta")
-    
-    # Filtrar datos por periodo seleccionado
+        anio_hasta = st.selectbox(
+            "Año final", 
+            anios_hasta, 
+            index=len(anios_hasta)-1,
+            help="Año final para calcular variaciones"
+        )
+
+    # Info sobre los datos
+    with st.expander("ℹ️ ¿Qué significan estas métricas?"):
+        st.markdown("""
+        **Patrimonio declarado**: Bienes menos deudas según la Declaración Jurada Patrimonial Integral.
+        
+        **Variación nominal**: Cambio porcentual en pesos argentinos. No considera inflación.
+        
+        **Variación real**: Variación nominal menos inflación acumulada del período. 
+        - Si es **positiva** → el patrimonio creció más que la inflación (ganó poder adquisitivo)
+        - Si es **negativa** → el patrimonio creció menos que la inflación (perdió poder adquisitivo)
+        
+        **Variación en USD**: Cambio porcentual medido en dólares (usando cotización oficial de fin de año).
+        
+        **Mediana**: El valor del medio cuando ordenás todos los patrimonios de menor a mayor. 
+        Es menos sensible a valores extremos que el promedio.
+        
+        **Nota**: Solo se incluyen declaraciones con patrimonio mayor a $0.
+        """)
+
+    st.markdown("---")
+
+    # Cargar datos filtrados
+    df_general = cargar_evolucion_general()
     df_general_filtrado = df_general[(df_general['anio'] >= anio_desde) & (df_general['anio'] <= anio_hasta)]
     df_indicadores_filtrado = df_indicadores[(df_indicadores.index >= anio_desde) & (df_indicadores.index <= anio_hasta)]
 
-    st.markdown("---")
+    if df_general_filtrado.empty:
+        st.warning("No hay datos para el período seleccionado.")
+        return
 
     # ========================================
     # NIVEL 1: VISTA GENERAL
     # ========================================
 
     st.markdown("## Vista General")
+    st.caption(f"Todas las declaraciones juradas con patrimonio > $0 ({anio_desde}-{anio_hasta})")
 
-    # Metricas principales
-    metricas_gen = calcular_metricas_evolucion(df_general_filtrado, df_indicadores_filtrado)
-    mostrar_metricas(metricas_gen)
+    # Métricas del último año
+    ultimo_anio = int(df_general_filtrado['anio'].max())
+    datos_ultimo = df_general_filtrado[df_general_filtrado['anio'] == ultimo_anio].iloc[0]
+    
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric(
+        f"Legisladores con DDJJ ({ultimo_anio})", 
+        int(datos_ultimo['legisladores']),
+        help="Cantidad de legisladores con declaración jurada y patrimonio > $0"
+    )
+    col2.metric(
+        "Patrimonio promedio", 
+        fmt_pesos(datos_ultimo['patrimonio_promedio']),
+        help="Promedio aritmético de todos los patrimonios declarados"
+    )
+    col3.metric(
+        "Mediana", 
+        fmt_pesos(datos_ultimo['mediana']),
+        help="Valor del medio: 50% declara menos y 50% declara más que este valor"
+    )
+    col4.metric(
+        "Patrimonio total", 
+        fmt_pesos(datos_ultimo['patrimonio_total']),
+        help="Suma de todos los patrimonios declarados"
+    )
 
-    # Graficos
+    # Métricas de variación
+    metricas_gen = calcular_metricas_evolucion(df_general_filtrado, df_indicadores_filtrado, anio_desde, anio_hasta)
+    if metricas_gen:
+        mostrar_metricas(metricas_gen)
+
+    # Gráficos
     col1, col2 = st.columns(2)
 
     with col1:
-        fig = grafico_evolucion_comparativa(df_general_filtrado, df_indicadores_filtrado, "Patrimonio vs Inflacion vs Dolar")
+        fig = grafico_evolucion_comparativa(df_general_filtrado, df_indicadores_filtrado, "Patrimonio vs Inflación vs Dólar")
         if fig:
             st.plotly_chart(fig, use_container_width=True)
         else:
-            st.info("Se necesitan al menos 2 años de datos para mostrar el grafico")
+            st.info("Se necesitan al menos 2 años de datos para mostrar el gráfico")
 
     with col2:
         fig = grafico_patrimonio_usd(df_general_filtrado, df_indicadores_filtrado, "Patrimonio Promedio en USD")
         if fig:
             st.plotly_chart(fig, use_container_width=True)
         else:
-            st.info("Se necesitan al menos 2 años de datos para mostrar el grafico")
+            st.info("Se necesitan al menos 2 años de datos para mostrar el gráfico")
 
     # ========================================
     # NIVEL 2: POR CAMARA
     # ========================================
 
     st.markdown("---")
-    st.markdown("## Por Camara")
+    st.markdown("## Por Cámara")
 
     df_camara = cargar_evolucion_por_camara()
     df_camara_filtrado = df_camara[(df_camara['anio'] >= anio_desde) & (df_camara['anio'] <= anio_hasta)]
 
     if not df_camara_filtrado.empty:
-        # Obtener ultimo año filtrado
-        ultimo_anio = df_camara_filtrado['anio'].max()
-        df_ultimo = df_camara_filtrado[df_camara_filtrado['anio'] == ultimo_anio]
+        ultimo_anio_cam = int(df_camara_filtrado['anio'].max())
+        df_ultimo_cam = df_camara_filtrado[df_camara_filtrado['anio'] == ultimo_anio_cam]
 
         col1, col2 = st.columns(2)
 
         for idx, camara in enumerate(['Diputados', 'Senadores']):
             df_cam = df_camara_filtrado[df_camara_filtrado['camara'] == camara]
-            datos_ultimo = df_ultimo[df_ultimo['camara'] == camara]
+            datos_cam = df_ultimo_cam[df_ultimo_cam['camara'] == camara]
 
             with [col1, col2][idx]:
-                if not datos_ultimo.empty:
-                    patrimonio_prom = datos_ultimo['patrimonio_promedio'].values[0]
-                    legisladores = int(datos_ultimo['legisladores'].values[0])
+                if not datos_cam.empty:
+                    patrimonio_prom = float(datos_cam['patrimonio_promedio'].values[0])
+                    legisladores = int(datos_cam['legisladores'].values[0])
 
-                    st.markdown(f"""
-                    <div style="background: white; border: 1px solid #E5E7EB; border-radius: 12px; padding: 1.5rem; text-align: center;">
-                        <div style="font-size: 1.1rem; font-weight: 600; color: #374151; margin-bottom: 0.5rem;">{camara}</div>
-                        <div style="font-size: 0.85rem; color: #6B7280;">Patrimonio Promedio ({ultimo_anio})</div>
-                        <div style="font-size: 1.8rem; font-weight: 700; color: #2563EB; margin: 0.5rem 0;">{fmt_pesos(patrimonio_prom)}</div>
-                        <div style="font-size: 0.85rem; color: #6B7280;">{legisladores} legisladores con DDJJ</div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    st.markdown(f"### {camara}")
+                    st.metric(f"Patrimonio promedio ({ultimo_anio_cam})", fmt_pesos(patrimonio_prom))
+                    st.caption(f"{legisladores} legisladores con DDJJ")
 
-                    # Calcular variacion real si hay suficientes datos
-                    metricas_cam = calcular_metricas_evolucion(
-                        df_cam.rename(columns={'patrimonio_promedio': 'patrimonio_promedio'}),
-                        df_indicadores_filtrado
-                    )
+                    metricas_cam = calcular_metricas_evolucion(df_cam, df_indicadores_filtrado, anio_desde, anio_hasta)
                     if metricas_cam:
                         color = "#059669" if metricas_cam['gano_inflacion'] else "#DC2626"
-                        texto = "Gano" if metricas_cam['gano_inflacion'] else "Perdio"
+                        texto = "Ganó" if metricas_cam['gano_inflacion'] else "Perdió"
                         st.markdown(f"""
-                        <div style="text-align: center; margin-top: 0.5rem; padding: 0.5rem; background: {'#ECFDF5' if metricas_cam['gano_inflacion'] else '#FEF2F2'}; border-radius: 8px;">
-                            <span style="color: {color}; font-weight: 600;">{texto} contra inflacion: {metricas_cam['var_real']:+.1f}%</span>
+                        <div style="padding: 0.5rem; background: {'#ECFDF5' if metricas_cam['gano_inflacion'] else '#FEF2F2'}; border-radius: 8px; margin-top: 0.5rem;">
+                            <span style="color: {color}; font-weight: 600;">{texto} vs inflación: {metricas_cam['var_real']:+.1f}%</span>
                         </div>
                         """, unsafe_allow_html=True)
-    
+
     # ========================================
     # NIVEL 3: POR BLOQUE
     # ========================================
@@ -548,39 +659,25 @@ def render():
             if not df_bloque_filtrado.empty:
                 st.markdown(f"### {bloque_sel}")
 
-                metricas_bloque = calcular_metricas_evolucion(df_bloque_filtrado, df_indicadores_filtrado)
-                mostrar_metricas(metricas_bloque)
+                metricas_bloque = calcular_metricas_evolucion(df_bloque_filtrado, df_indicadores_filtrado, anio_desde, anio_hasta)
+                if metricas_bloque:
+                    mostrar_metricas(metricas_bloque)
 
                 col1, col2 = st.columns(2)
 
                 with col1:
-                    fig = grafico_evolucion_comparativa(df_bloque_filtrado, df_indicadores_filtrado, f"Evolucion - {bloque_sel}")
+                    fig = grafico_evolucion_comparativa(df_bloque_filtrado, df_indicadores_filtrado, f"Evolución - {bloque_sel}")
                     if fig:
                         st.plotly_chart(fig, use_container_width=True)
 
                 with col2:
-                    fig = grafico_patrimonio_usd(df_bloque_filtrado, df_indicadores_filtrado, f"Patrimonio USD - {bloque_sel}")
+                    fig = grafico_patrimonio_usd(df_bloque_filtrado, df_indicadores_filtrado, f"En USD - {bloque_sel}")
                     if fig:
                         st.plotly_chart(fig, use_container_width=True)
-
-                # Legisladores del bloque
-                st.markdown("#### Legisladores del bloque")
-                df_legs = cargar_legisladores_con_ddjj(bloque=bloque_sel)
-
-                if not df_legs.empty:
-                    st.dataframe(
-                        df_legs[['nombre', 'camara', 'anios_ddjj', 'ultimo_patrimonio']].rename(columns={
-                            'nombre': 'Legislador',
-                            'camara': 'Camara',
-                            'anios_ddjj': 'DDJJ',
-                            'ultimo_patrimonio': 'Ultimo Patrimonio'
-                        }),
-                        use_container_width=True,
-                        hide_index=True,
-                        column_config={
-                            'Ultimo Patrimonio': st.column_config.NumberColumn(format="$ %d")
-                        }
-                    )
+            else:
+                st.info("No hay datos para este bloque en el período seleccionado.")
+    else:
+        st.info("No hay bloques con DDJJ vinculadas.")
 
     # ========================================
     # NIVEL 4: POR LEGISLADOR
@@ -589,16 +686,13 @@ def render():
     st.markdown("---")
     st.markdown("## Por Legislador")
 
-    # Filtros
     col1, col2 = st.columns(2)
     with col1:
-        camara_filtro = st.selectbox("Filtrar por camara", ["Todas", "Diputados", "Senadores"], key="leg_camara")
+        camara_filtro = st.selectbox("Filtrar por cámara", ["Todas", "Diputados", "Senadores"], key="leg_camara")
     with col2:
         busqueda = st.text_input("Buscar por nombre", placeholder="Ej: Kirchner...", key="leg_busq")
 
-    df_legisladores = cargar_legisladores_con_ddjj(
-        camara=camara_filtro if camara_filtro != "Todas" else None
-    )
+    df_legisladores = cargar_legisladores_con_ddjj(camara=camara_filtro)
 
     if busqueda:
         df_legisladores = df_legisladores[
@@ -606,7 +700,6 @@ def render():
         ]
 
     if not df_legisladores.empty:
-        # Selector de legislador
         opciones = df_legisladores['nombre'].tolist()
 
         legislador_sel = st.selectbox(
@@ -623,21 +716,18 @@ def render():
 
             col1, col2, col3 = st.columns(3)
             col1.markdown(f"**Bloque:** {leg_data['bloque'] or '-'}")
-            col2.markdown(f"**Camara:** {leg_data['camara'] or '-'}")
+            col2.markdown(f"**Cámara:** {leg_data['camara'] or '-'}")
             col3.markdown(f"**DDJJ disponibles:** {int(leg_data['anios_ddjj'])}")
 
-            # Serie historica
             df_serie = cargar_serie_legislador(cuit)
 
             if not df_serie.empty and not df_indicadores.empty:
-                # Calcular patrimonio en USD
                 df_serie = df_serie.merge(df_indicadores.reset_index()[['anio', 'dolar']], on='anio', how='left')
-                df_serie['patrimonio_neto'] = pd.to_numeric(df_serie['patrimonio_neto'], errors='coerce').fillna(0)
                 df_serie['dolar'] = pd.to_numeric(df_serie['dolar'], errors='coerce').fillna(1)
                 df_serie['patrimonio_usd'] = df_serie['patrimonio_neto'] / df_serie['dolar']
-                # Grafico
-                fig = go.Figure()
 
+                # Gráfico
+                fig = go.Figure()
                 fig.add_trace(go.Scatter(
                     x=df_serie['anio'],
                     y=df_serie['patrimonio_usd'],
@@ -647,24 +737,20 @@ def render():
                     fillcolor='rgba(37, 99, 235, 0.1)',
                     mode='lines+markers'
                 ))
-
                 fig.update_layout(
-                    title="Evolucion Patrimonial en USD",
+                    title="Evolución Patrimonial en USD",
                     xaxis_title="Año",
                     yaxis_title="USD",
                     yaxis_tickformat="$,.0f",
                     template="plotly_white",
                     height=350
                 )
-
                 st.plotly_chart(fig, use_container_width=True)
 
                 # Tabla detalle
                 st.markdown("#### Detalle por año")
-
                 tabla = df_serie[['anio', 'patrimonio_neto', 'patrimonio_usd', 'total_bienes', 'total_deudas']].copy()
                 tabla.columns = ['Año', 'Patrimonio $', 'Patrimonio USD', 'Bienes', 'Deudas']
-
                 st.dataframe(
                     tabla,
                     use_container_width=True,
@@ -676,6 +762,10 @@ def render():
                         'Deudas': st.column_config.NumberColumn(format="$ %d"),
                     }
                 )
+            else:
+                st.info("No hay datos de patrimonio para este legislador.")
+    else:
+        st.info("No se encontraron legisladores con esos criterios.")
 
     # ========================================
     # RANKING
@@ -686,17 +776,16 @@ def render():
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        anios_rank = sorted([int(x) for x in df_general['anio'].unique()], reverse=True)
-        anio_rank = st.selectbox("Año", ["Ultimo disponible"] + list(anios_rank), key="rank_anio")
+        anios_rank = sorted([int(x) for x in anios_disponibles], reverse=True)
+        anio_rank = st.selectbox("Año", ["Último disponible"] + anios_rank, key="rank_anio")
     with col2:
-        camara_rank = st.selectbox("Camara", ["Todas", "Diputados", "Senadores"], key="rank_camara")
+        camara_rank = st.selectbox("Cámara", ["Todas", "Diputados", "Senadores"], key="rank_camara")
     with col3:
         top_n = st.slider("Top", 10, 50, 20, key="rank_n")
 
-    anio_param = None if anio_rank == "Ultimo disponible" else int(anio_rank)
-    camara_param = None if camara_rank == "Todas" else camara_rank
-
-    df_ranking = cargar_ranking_patrimonio(anio=anio_param, camara=camara_param, limit=top_n)
+    anio_param = None if anio_rank == "Último disponible" else int(anio_rank)
+    
+    df_ranking = cargar_ranking_patrimonio(anio=anio_param, camara=camara_rank, limit=top_n)
     
     if not df_ranking.empty:
         for i, (_, row) in enumerate(df_ranking.iterrows(), 1):
@@ -714,25 +803,18 @@ def render():
                 </div>
             </div>
             """, unsafe_allow_html=True)
+    else:
+        st.info("No hay datos de ranking disponibles.")
     
     # ========================================
     # INFO ADICIONAL
     # ========================================
 
     st.markdown("---")
-    with st.expander("¿Como consultar la declaracion original?"):
+    with st.expander("🔗 Consultar declaración original"):
         st.markdown(f"""
-        **Buscador de la Oficina Anticorrupcion:**
+        **Buscador de la Oficina Anticorrupción:**
         [Consultar DDJJ]({URL_BUSCADOR})
 
-        Podes buscar por CUIT del legislador.
-        """)
-    
-    with st.expander("¿Que significa cada metrica?"):
-        st.markdown("""
-        - **Variacion nominal**: Cambio porcentual del patrimonio en pesos argentinos.
-        - **Variacion real (vs inflacion)**: Variacion nominal menos la inflacion acumulada del periodo. Si es positiva, el patrimonio gano poder adquisitivo. Si es negativa, perdio.
-        - **Variacion en USD**: Cambio porcentual del patrimonio medido en dolares estadounidenses.
-        
-        Los graficos muestran indices base 100, donde el primer año del periodo seleccionado equivale a 100. Esto permite comparar facilmente como evoluciono el patrimonio respecto a la inflacion y el dolar.
+        Podés buscar por CUIT del legislador para ver la declaración completa.
         """)
