@@ -121,7 +121,8 @@ def cargar_evolucion_por_camara(solo_vigentes=False):
                     d.anio,
                     CASE WHEN d.organismo ILIKE '%SENADO%' THEN 'Senadores' ELSE 'Diputados' END as camara,
                     COUNT(*) as legisladores,
-                    AVG(d.patrimonio_neto) as patrimonio_promedio
+                    AVG(d.patrimonio_neto) as patrimonio_promedio,
+                    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY d.patrimonio_neto) as mediana
                 FROM ddjj_legisladores d
                 JOIN legisladores l ON d.legislador_id = l.id
                 WHERE d.patrimonio_neto > 0 AND l.mandato_hasta >= CURRENT_DATE
@@ -134,19 +135,21 @@ def cargar_evolucion_por_camara(solo_vigentes=False):
                     anio,
                     CASE WHEN organismo ILIKE '%SENADO%' THEN 'Senadores' ELSE 'Diputados' END as camara,
                     COUNT(*) as legisladores,
-                    AVG(patrimonio_neto) as patrimonio_promedio
+                    AVG(patrimonio_neto) as patrimonio_promedio,
+                    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY patrimonio_neto) as mediana
                 FROM ddjj_legisladores
                 WHERE patrimonio_neto > 0
                 GROUP BY anio, camara
                 ORDER BY anio, camara
             """
         result = db.execute(text(query))
-        df = pd.DataFrame(result.fetchall(), columns=['anio', 'camara', 'legisladores', 'patrimonio_promedio'])
+        df = pd.DataFrame(result.fetchall(), columns=['anio', 'camara', 'legisladores', 'patrimonio_promedio', 'mediana'])
         df['patrimonio_promedio'] = pd.to_numeric(df['patrimonio_promedio'], errors='coerce')
+        df['mediana'] = pd.to_numeric(df['mediana'], errors='coerce')
         return df
     finally:
         db.close()
-
+        
 @st.cache_data(ttl=3600)
 def cargar_evolucion_por_bloque(bloque):
     """Carga evolucion patrimonial de un bloque especifico."""
@@ -612,44 +615,64 @@ def render():
         else:
             st.info("Se necesitan al menos 2 años de datos para mostrar el gráfico")
 
-    # ========================================
-    # NIVEL 2: POR CAMARA
-    # ========================================
+# ========================================
+# NIVEL 2: POR CAMARA
+# ========================================
 
-    st.markdown("---")
-    st.markdown("## Por Cámara")
+st.markdown("---")
+st.markdown("## Por Cámara")
+st.caption("Se muestra la **mediana** (valor del medio) que es más representativa que el promedio cuando hay patrimonios muy altos que distorsionan.")
 
-    df_camara = cargar_evolucion_por_camara()
-    df_camara_filtrado = df_camara[(df_camara['anio'] >= anio_desde) & (df_camara['anio'] <= anio_hasta)]
+df_camara = cargar_evolucion_por_camara()
+df_camara_filtrado = df_camara[(df_camara['anio'] >= anio_desde) & (df_camara['anio'] <= anio_hasta)]
 
-    if not df_camara_filtrado.empty:
-        ultimo_anio_cam = int(df_camara_filtrado['anio'].max())
-        df_ultimo_cam = df_camara_filtrado[df_camara_filtrado['anio'] == ultimo_anio_cam]
+if not df_camara_filtrado.empty:
+    ultimo_anio_cam = int(df_camara_filtrado['anio'].max())
+    primer_anio_cam = int(df_camara_filtrado['anio'].min())
+    df_ultimo_cam = df_camara_filtrado[df_camara_filtrado['anio'] == ultimo_anio_cam]
+    df_primer_cam = df_camara_filtrado[df_camara_filtrado['anio'] == primer_anio_cam]
 
-        col1, col2 = st.columns(2)
+    col1, col2 = st.columns(2)
 
-        for idx, camara in enumerate(['Diputados', 'Senadores']):
-            df_cam = df_camara_filtrado[df_camara_filtrado['camara'] == camara]
-            datos_cam = df_ultimo_cam[df_ultimo_cam['camara'] == camara]
+    for idx, camara in enumerate(['Diputados', 'Senadores']):
+        datos_ultimo = df_ultimo_cam[df_ultimo_cam['camara'] == camara]
+        datos_primer = df_primer_cam[df_primer_cam['camara'] == camara]
 
-            with [col1, col2][idx]:
-                if not datos_cam.empty:
-                    patrimonio_prom = float(datos_cam['patrimonio_promedio'].values[0])
-                    legisladores = int(datos_cam['legisladores'].values[0])
+        with [col1, col2][idx]:
+            if not datos_ultimo.empty and not datos_primer.empty:
+                mediana_final = float(datos_ultimo['mediana'].values[0])
+                mediana_inicial = float(datos_primer['mediana'].values[0])
+                legisladores = int(datos_ultimo['legisladores'].values[0])
+                 
+                # Calcular variación real de la mediana
+                ipc_inicial = float(df_indicadores.loc[primer_anio_cam, 'ipc']) if primer_anio_cam in df_indicadores.index else None
+                ipc_final = float(df_indicadores.loc[ultimo_anio_cam, 'ipc']) if ultimo_anio_cam in df_indicadores.index else None
+                
+                if ipc_inicial and ipc_final and mediana_inicial > 0:
+                    ratio_mediana = mediana_final / mediana_inicial
+                    ratio_inflacion = ipc_final / ipc_inicial
+                    var_real_mediana = ((ratio_mediana / ratio_inflacion) - 1) * 100
+                    gano = var_real_mediana > 0
+                else:
+                    var_real_mediana = None
+                    gano = None
+                st.markdown(f"### {camara}")
+                st.metric(
+                    f"Mediana patrimonial ({ultimo_anio_cam})", 
+                    fmt_pesos(mediana_final),
+                    help="Valor del medio: 50% declara menos y 50% declara más"
+                )
+                st.caption(f"{legisladores} legisladores con DDJJ")
 
-                    st.markdown(f"### {camara}")
-                    st.metric(f"Patrimonio promedio ({ultimo_anio_cam})", fmt_pesos(patrimonio_prom))
-                    st.caption(f"{legisladores} legisladores con DDJJ")
-
-                    metricas_cam = calcular_metricas_evolucion(df_cam, df_indicadores_filtrado, anio_desde, anio_hasta)
-                    if metricas_cam:
-                        color = "#059669" if metricas_cam['gano_inflacion'] else "#DC2626"
-                        texto = "Ganó" if metricas_cam['gano_inflacion'] else "Perdió"
-                        st.markdown(f"""
-                        <div style="padding: 0.5rem; background: {'#ECFDF5' if metricas_cam['gano_inflacion'] else '#FEF2F2'}; border-radius: 8px; margin-top: 0.5rem;">
-                            <span style="color: {color}; font-weight: 600;">{texto} vs inflación: {metricas_cam['var_real']:+.1f}%</span>
-                        </div>
-                        """, unsafe_allow_html=True)
+                if var_real_mediana is not None:
+                    color = "#059669" if gano else "#DC2626"
+                    texto = "Ganó" if gano else "Perdió"
+                    st.markdown(f"""
+                    <div style="padding: 0.5rem; background: {'#ECFDF5' if gano else '#FEF2F2'}; border-radius: 8px; margin-top: 0.5rem;">
+                        <span style="color: {color}; font-weight: 600;">{texto} vs inflación: {var_real_mediana:+.1f}%</span>
+                        <br><span style="font-size: 0.8rem; color: #6B7280;">Mediana {primer_anio_cam}: {fmt_pesos(mediana_inicial)} → {ultimo_anio_cam}: {fmt_pesos(mediana_final)}</span>
+                    </div>
+                    """, unsafe_allow_html=True)
 
     # ========================================
     # NIVEL 3: POR BLOQUE
