@@ -632,7 +632,9 @@ def render():
             if not df_serie.empty and not df_indicadores.empty:
                 # Calcular patrimonio en USD
                 df_serie = df_serie.merge(df_indicadores.reset_index()[['anio', 'dolar']], on='anio', how='left')
-                df_serie['patrimonio_usd'] = df_serie['patrimonio_neto'] / df_serie['dolar'].astype(float)
+                df_serie['patrimonio_neto'] = df_serie['patrimonio_neto'].astype(float)
+                df_serie['dolar'] = df_serie['dolar'].astype(float)
+                df_serie['patrimonio_usd'] = df_serie['patrimonio_neto'] / df_serie['dolar']
 
                 # Grafico
                 fig = go.Figure()
