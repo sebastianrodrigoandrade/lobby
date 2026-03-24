@@ -685,14 +685,14 @@ def render():
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        anios_rank = sorted(df_general['anio'].unique(), reverse=True)
+        anios_rank = sorted([int(x) for x in df_general['anio'].unique()], reverse=True)
         anio_rank = st.selectbox("Año", ["Ultimo disponible"] + list(anios_rank), key="rank_anio")
     with col2:
         camara_rank = st.selectbox("Camara", ["Todas", "Diputados", "Senadores"], key="rank_camara")
     with col3:
         top_n = st.slider("Top", 10, 50, 20, key="rank_n")
 
-    anio_param = None if anio_rank == "Ultimo disponible" else anio_rank
+    anio_param = None if anio_rank == "Ultimo disponible" else int(anio_rank)
     camara_param = None if camara_rank == "Todas" else camara_rank
 
     df_ranking = cargar_ranking_patrimonio(anio=anio_param, camara=camara_param, limit=top_n)
