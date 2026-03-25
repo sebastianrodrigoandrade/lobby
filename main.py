@@ -13,7 +13,7 @@ st.set_page_config(
 
 from streamlit_option_menu import option_menu
 from src.styles import apply_styles
-from src.pages import home, legisladores, actividad, patrimonio, estadisticas
+from src.pages import home, legisladores, actividad, patrimonio, estadisticas, alertas
 
 # Aplicar estilos
 apply_styles()
@@ -35,7 +35,7 @@ st.markdown("""
 # NAVEGACIÓN HORIZONTAL
 # ============================================
 
-menu_options = ["Inicio", "Legisladores", "Actividad", "Patrimonio", "Estadisticas"]
+menu_options = ["Inicio", "Legisladores", "Actividad", "Patrimonio", "Alertas", "Estadisticas"]
 
 # Inicializar el estado del menú si no existe
 if 'current_page' not in st.session_state:
@@ -55,7 +55,7 @@ except ValueError:
 selected = option_menu(
     menu_title=None,
     options=menu_options,
-    icons=["house", "people", "clipboard-check", "cash-stack", "bar-chart"],
+    icons=["house", "people", "clipboard-check", "cash-stack", "exclamation-triangle", "bar-chart"],
     default_index=default_index,
     orientation="horizontal",
     key="main_menu"
@@ -79,5 +79,7 @@ elif selected == "Actividad":
     actividad.render()
 elif selected == "Patrimonio":
     patrimonio.render()
+elif selected == "Alertas":
+    alertas.render()
 elif selected == "Estadisticas":
     estadisticas.render()
