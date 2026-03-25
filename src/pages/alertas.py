@@ -219,18 +219,18 @@ def fmt_pct(valor):
 
 def render():
     st.markdown("<div style='height: 1.5rem'></div>", unsafe_allow_html=True)
-    st.title("Ì∫® Alertas Patrimoniales")
+    st.title("ÔøΩÔøΩÔøΩ Alertas Patrimoniales")
     st.markdown("<div class='page-subtitle'>Detecci√≥n autom√°tica de anomal√≠as en declaraciones juradas</div>", unsafe_allow_html=True)
     
     # Info del per√≠odo
-    st.info("Ì≥Ö **Per√≠odo analizado:** 2022-2024 | **Inflaci√≥n acumulada:** 493%")
+    st.info("ÔøΩÔøΩÔøΩ **Per√≠odo analizado:** 2022-2024 | **Inflaci√≥n acumulada:** 493%")
     
     # Tabs para cada tipo de alerta
     tab1, tab2, tab3, tab4 = st.tabs([
-        "Ì≥à Crecimiento inusual", 
-        "Ì≥â Ca√≠da patrimonial",
-        "Ì≤∞ Nuevos con alto patrimonio",
-        "Ì∏∞ Perdieron vs inflaci√≥n"
+        " Crecimiento inusual", 
+        " Ca√≠da patrimonial",
+        " Nuevos con alto patrimonio",
+        " Perdieron vs inflaci√≥n"
     ])
     
     with tab1:
@@ -342,7 +342,7 @@ def render():
     
     # Metodolog√≠a
     st.markdown("---")
-    with st.expander("Ì≥ä Metodolog√≠a"):
+    with st.expander(" Metodolog√≠a"):
         st.markdown("""
         **Fuentes de datos:**
         - Declaraciones Juradas Patrimoniales Integrales de la Oficina Anticorrupci√≥n
