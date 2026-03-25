@@ -49,24 +49,27 @@ def cargar_legisladores(camara=None, solo_vigentes=True):
 @st.cache_data(ttl=3600)
 def cargar_votos_legislador(legislador_id):
     db = SessionLocal()
-    result = db.execute(text("""
-        SELECT vh.voto as voto_individual, vh.acta_id, va.fecha,
-               va.asunto as titulo_acta, va.resultado as resultado_general
-        FROM votos_hcdn vh
-        LEFT JOIN votaciones_hcdn va ON va.acta_id = vh.acta_id
-        WHERE vh.legislador_id = :id
-        UNION ALL
-        SELECT v.voto_individual, v.acta_id,
-               a.fecha, a.titulo as titulo_acta, a.resultado as resultado_general
-        FROM votos v
-        LEFT JOIN actas_cabecera a ON a.acta_id = v.acta_id
-        WHERE v.legislador_id = :id
-        ORDER BY fecha DESC NULLS LAST
-    """), {"id": legislador_id})
-    df = pd.DataFrame(result.fetchall(), columns=result.keys())
-    db.close()
-    df['titulo_acta'] = df['titulo_acta'].apply(limpiar)
-    return df
+    try:
+        result = db.execute(text("""
+            SELECT vh.voto as voto_individual, vh.acta_id, 
+                   TO_DATE(va.fecha, 'DD/MM/YYYY') as fecha,
+                   va.asunto as titulo_acta, va.resultado as resultado_general
+            FROM votos_hcdn vh
+            LEFT JOIN votaciones_hcdn va ON va.acta_id = vh.acta_id
+            WHERE vh.legislador_id = :id
+            UNION ALL
+            SELECT v.voto_individual, v.acta_id,
+                   a.fecha, a.titulo as titulo_acta, a.resultado as resultado_general
+            FROM votos v
+            LEFT JOIN actas_cabecera a ON a.acta_id = v.acta_id
+            WHERE v.legislador_id = :id
+            ORDER BY fecha DESC NULLS LAST
+        """), {"id": legislador_id})
+        df = pd.DataFrame(result.fetchall(), columns=result.keys())
+        df['titulo_acta'] = df['titulo_acta'].apply(limpiar)
+        return df
+    finally:
+        db.close()
 
 @st.cache_data(ttl=3600)
 def cargar_proyectos_legislador(nombre):
