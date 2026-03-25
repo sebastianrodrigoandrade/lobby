@@ -295,7 +295,77 @@ def cargar_ranking_patrimonio(anio=None, camara=None, limit=20):
         return df
     finally:
         db.close()
-
+@st.cache_data(ttl=3600)
+def obtener_ranking_legislador(cuit, anio=None):
+    """Obtiene la posición en el ranking de un legislador."""
+    db = SessionLocal()
+    try:
+        # Si no se especifica año, usar el último disponible para ese legislador
+        if anio is None:
+            result = db.execute(text("""
+                SELECT MAX(anio) FROM ddjj_legisladores 
+                WHERE cuit = :cuit AND patrimonio_neto > 0
+            """), {'cuit': cuit})
+            anio = result.scalar()
+        
+        if not anio:
+            return None
+        
+        # Obtener patrimonio del legislador
+        result = db.execute(text("""
+            SELECT patrimonio_neto, organismo FROM ddjj_legisladores 
+            WHERE cuit = :cuit AND anio = :anio AND patrimonio_neto > 0
+        """), {'cuit': cuit, 'anio': anio})
+        row = result.fetchone()
+        
+        if not row:
+            return None
+        
+        patrimonio = float(row[0])
+        es_senador = 'SENADO' in row[1].upper() if row[1] else False
+        camara = 'Senadores' if es_senador else 'Diputados'
+        
+        # Ranking general
+        result = db.execute(text("""
+            SELECT COUNT(*) + 1 FROM ddjj_legisladores 
+            WHERE anio = :anio AND patrimonio_neto > :pat
+        """), {'anio': anio, 'pat': patrimonio})
+        rank_general = result.scalar()
+        
+        result = db.execute(text("""
+            SELECT COUNT(*) FROM ddjj_legisladores 
+            WHERE anio = :anio AND patrimonio_neto > 0
+        """), {'anio': anio})
+        total_general = result.scalar()
+        
+        # Ranking por cámara
+        filtro_camara = '%SENADO%' if es_senador else '%DIPUTADOS%'
+        result = db.execute(text("""
+            SELECT COUNT(*) + 1 FROM ddjj_legisladores 
+            WHERE anio = :anio AND patrimonio_neto > :pat 
+            AND organismo ILIKE :filtro
+        """), {'anio': anio, 'pat': patrimonio, 'filtro': filtro_camara})
+        rank_camara = result.scalar()
+        
+        result = db.execute(text("""
+            SELECT COUNT(*) FROM ddjj_legisladores 
+            WHERE anio = :anio AND patrimonio_neto > 0
+            AND organismo ILIKE :filtro
+        """), {'anio': anio, 'filtro': filtro_camara})
+        total_camara = result.scalar()
+        
+        return {
+            'anio': anio,
+            'patrimonio': patrimonio,
+            'camara': camara,
+            'rank_general': rank_general,
+            'total_general': total_general,
+            'rank_camara': rank_camara,
+            'total_camara': total_camara
+        }
+    finally:
+        db.close()
+        
 # ============================================
 # FUNCIONES DE VISUALIZACION
 # ============================================
@@ -713,7 +783,7 @@ def render():
     else:
         st.info("No hay bloques con DDJJ vinculadas.")
 
-    # ========================================
+# ========================================
     # NIVEL 4: POR LEGISLADOR
     # ========================================
 
@@ -745,59 +815,122 @@ def render():
         if legislador_sel:
             leg_data = df_legisladores[df_legisladores['nombre'] == legislador_sel].iloc[0]
             cuit = leg_data['cuit']
+            
+            # Formatear nombre (capitalizar correctamente)
+            nombre_formateado = legislador_sel.title()
+            st.markdown(f"### {nombre_formateado}")
 
-            st.markdown(f"### {legislador_sel}")
-
+            # Info básica
             col1, col2, col3 = st.columns(3)
             col1.markdown(f"**Bloque:** {leg_data['bloque'] or '-'}")
             col2.markdown(f"**Cámara:** {leg_data['camara'] or '-'}")
             col3.markdown(f"**DDJJ disponibles:** {int(leg_data['anios_ddjj'])}")
 
+            # Obtener ranking
+            ranking = obtener_ranking_legislador(cuit)
+            
+            if ranking:
+                st.markdown("#### 🏆 Ranking patrimonial")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric(
+                        f"Entre todos los legisladores ({ranking['anio']})",
+                        f"#{ranking['rank_general']} de {ranking['total_general']}",
+                        help="Posición en el ranking de todos los legisladores con DDJJ ese año"
+                    )
+                with col2:
+                    st.metric(
+                        f"Entre {ranking['camara']} ({ranking['anio']})",
+                        f"#{ranking['rank_camara']} de {ranking['total_camara']}",
+                        help=f"Posición en el ranking solo de {ranking['camara']}"
+                    )
+
+            # Tabs para organizar la información
+            tab1, tab2 = st.tabs(["📈 Evolución", "📋 Detalle"])
+
             df_serie = cargar_serie_legislador(cuit)
 
-            if not df_serie.empty and not df_indicadores.empty:
-                df_serie = df_serie.merge(df_indicadores.reset_index()[['anio', 'dolar']], on='anio', how='left')
-                df_serie['dolar'] = pd.to_numeric(df_serie['dolar'], errors='coerce').fillna(1)
-                df_serie['patrimonio_usd'] = df_serie['patrimonio_neto'] / df_serie['dolar']
+            with tab1:
+                if not df_serie.empty and not df_indicadores.empty:
+                    df_serie = df_serie.merge(df_indicadores.reset_index()[['anio', 'dolar']], on='anio', how='left')
+                    df_serie['dolar'] = pd.to_numeric(df_serie['dolar'], errors='coerce').fillna(1)
+                    df_serie['patrimonio_usd'] = df_serie['patrimonio_neto'] / df_serie['dolar']
 
-                # Gráfico
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(
-                    x=df_serie['anio'],
-                    y=df_serie['patrimonio_usd'],
-                    name="Patrimonio USD",
-                    line=dict(color="#2563EB", width=3),
-                    fill='tozeroy',
-                    fillcolor='rgba(37, 99, 235, 0.1)',
-                    mode='lines+markers'
-                ))
-                fig.update_layout(
-                    title="Evolución Patrimonial en USD",
-                    xaxis_title="Año",
-                    yaxis_title="USD",
-                    yaxis_tickformat="$,.0f",
-                    template="plotly_white",
-                    height=350
-                )
-                st.plotly_chart(fig, use_container_width=True)
+                    # Gráfico
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(
+                        x=df_serie['anio'],
+                        y=df_serie['patrimonio_usd'],
+                        name="Patrimonio USD",
+                        line=dict(color="#2563EB", width=3),
+                        fill='tozeroy',
+                        fillcolor='rgba(37, 99, 235, 0.1)',
+                        mode='lines+markers'
+                    ))
+                    fig.update_layout(
+                        title="Evolución Patrimonial en USD",
+                        xaxis_title="Año",
+                        yaxis_title="USD",
+                        yaxis_tickformat="$,.0f",
+                        template="plotly_white",
+                        height=350
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
 
-                # Tabla detalle
-                st.markdown("#### Detalle por año")
-                tabla = df_serie[['anio', 'patrimonio_neto', 'patrimonio_usd', 'total_bienes', 'total_deudas']].copy()
-                tabla.columns = ['Año', 'Patrimonio $', 'Patrimonio USD', 'Bienes', 'Deudas']
-                st.dataframe(
-                    tabla,
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        'Patrimonio $': st.column_config.NumberColumn(format="$ %d"),
-                        'Patrimonio USD': st.column_config.NumberColumn(format="USD %d"),
-                        'Bienes': st.column_config.NumberColumn(format="$ %d"),
-                        'Deudas': st.column_config.NumberColumn(format="$ %d"),
-                    }
-                )
-            else:
-                st.info("No hay datos de patrimonio para este legislador.")
+                    # Variación si hay más de un año
+                    if len(df_serie) >= 2:
+                        primer_anio = int(df_serie['anio'].min())
+                        ultimo_anio = int(df_serie['anio'].max())
+                        pat_inicial = float(df_serie[df_serie['anio'] == primer_anio]['patrimonio_neto'].values[0])
+                        pat_final = float(df_serie[df_serie['anio'] == ultimo_anio]['patrimonio_neto'].values[0])
+                        
+                        if primer_anio in df_indicadores.index and ultimo_anio in df_indicadores.index:
+                            ipc_inicial = float(df_indicadores.loc[primer_anio, 'ipc'])
+                            ipc_final = float(df_indicadores.loc[ultimo_anio, 'ipc'])
+                            
+                            ratio_pat = pat_final / pat_inicial if pat_inicial else 1
+                            ratio_ipc = ipc_final / ipc_inicial if ipc_inicial else 1
+                            var_real = ((ratio_pat / ratio_ipc) - 1) * 100
+                            
+                            gano = var_real > 0
+                            color = "#059669" if gano else "#DC2626"
+                            texto = "Ganó" if gano else "Perdió"
+                            
+                            st.markdown(f"""
+                            <div style="padding: 0.8rem; background: {'#ECFDF5' if gano else '#FEF2F2'}; border-radius: 8px; margin-top: 0.5rem;">
+                                <span style="color: {color}; font-weight: 600; font-size: 1.1rem;">{texto} vs inflación: {var_real:+.1f}%</span>
+                                <br><span style="font-size: 0.85rem; color: #6B7280;">Período {primer_anio} - {ultimo_anio}</span>
+                            </div>
+                            """, unsafe_allow_html=True)
+                else:
+                    st.info("No hay datos suficientes para mostrar la evolución.")
+
+            with tab2:
+                if not df_serie.empty:
+                    st.markdown("#### Detalle por año")
+                    tabla = df_serie[['anio', 'patrimonio_neto', 'patrimonio_usd', 'total_bienes', 'total_deudas']].copy()
+                    tabla.columns = ['Año', 'Patrimonio $', 'Patrimonio USD', 'Bienes', 'Deudas']
+                    st.dataframe(
+                        tabla,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            'Patrimonio $': st.column_config.NumberColumn(format="$ %,.0f"),
+                            'Patrimonio USD': st.column_config.NumberColumn(format="USD %,.0f"),
+                            'Bienes': st.column_config.NumberColumn(format="$ %,.0f"),
+                            'Deudas': st.column_config.NumberColumn(format="$ %,.0f"),
+                        }
+                    )
+                    
+                    # Link a la DDJJ original
+                    st.markdown(f"""
+                    <div style="margin-top: 1rem; padding: 0.8rem; background: #F3F4F6; border-radius: 8px;">
+                        <strong>CUIT:</strong> {cuit}<br>
+                        <a href="{URL_BUSCADOR}" target="_blank">🔗 Consultar declaración original en la Oficina Anticorrupción</a>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.info("No hay datos de patrimonio para este legislador.")
     else:
         st.info("No se encontraron legisladores con esos criterios.")
 
