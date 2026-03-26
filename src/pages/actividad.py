@@ -1,12 +1,15 @@
+# -*- coding: utf-8 -*-
 """
-Lobby - Página de Actividad
-Votaciones, Sesiones, Comisiones
+Lobby - Página de Votaciones
 """
-import re
 import streamlit as st
 import pandas as pd
 from sqlalchemy import text
 from src.database import SessionLocal
+
+# ============================================
+# FUNCIONES AUXILIARES
+# ============================================
 
 ENCODING = {
     '¾': 'ó', 'ß': 'á', '±': 'ñ', 'Ý': 'í', '┴': 'Á',
@@ -20,338 +23,297 @@ def limpiar(texto):
         texto = texto.replace(mal, bien)
     return texto
 
-def extraer_tema_madre(titulo):
-    titulo = limpiar(titulo or '')
-    partes = titulo.split('.')
-    return partes[0].strip()
-
-NOMBRES_COMISIONES = {
-    "caconstitucionales": "Asuntos Constitucionales",
-    "clgeneral": "Legislación General",
-    "creyculto": "Relaciones Exteriores y Culto",
-    "cpyhacienda": "Presupuesto y Hacienda",
-    "ceducacion": "Educación",
-    "ccytecnologia": "Ciencia y Tecnología",
-    "ccultura": "Cultura",
-    "cjusticia": "Justicia",
-    "cpyssocial": "Previsión y Seguridad Social",
-    "casyspublica": "Acción Social y Salud Pública",
-    "cfnjuventudes": "Familia, Niñez y Juventudes",
-    "cpmayores": "Personas Mayores",
-    "clpenal": "Legislación Penal",
-    "cltrabajo": "Legislación del Trabajo",
-    "cdnacional": "Defensa Nacional",
-    "copublicas": "Obras Públicas",
-    "cayganaderia": "Agricultura y Ganadería",
-    "cfinanzas": "Finanzas",
-    "cindustria": "Industria",
-    "ccomercio": "Comercio",
-    "ceycombust": "Energía y Combustibles",
-    "cceinformatica": "Comunicaciones e Informática",
-    "ctransportes": "Transportes",
-    "ceydregional": "Economía y Desarrollo Regional",
-    "camunicipales": "Asuntos Municipales",
-    "cimaritimos": "Intereses Marítimos",
-    "cvyourbano": "Vivienda y Ordenamiento Urbano",
-    "cppyreglamento": "Peticiones, Poderes y Reglamento",
-    "cjpolitico": "Juicio Político",
-    "crnaturales": "Recursos Naturales",
-    "cturismo": "Turismo",
-    "ceconomia": "Economía",
-    "cmineria": "Minería",
-    "cdrogadiccion": "Prevención de Adicciones",
-    "cdhygarantias": "Derechos Humanos y Garantías",
-    "cacym": "Asuntos Cooperativos y Mutuales",
-    "cmercosur": "Mercosur",
-    "cpymes": "Pequeñas y Medianas Empresas",
-    "cdconsumidor": "Defensa del Consumidor",
-    "csinterior": "Seguridad Interior",
-    "clexpresion": "Libertad de Expresión",
-    "cdiscap": "Discapacidad",
-    "cmujeresydiv": "Mujeres y Diversidad",
-}
-
+# ============================================
+# FUNCIONES DE CARGA
+# ============================================
 
 @st.cache_data(ttl=3600)
-def cargar_votaciones(limit=100):
+def cargar_votaciones_hcdn(limit=50, offset=0):
+    """Carga votaciones de HCDN con paginación."""
     db = SessionLocal()
-    result = db.execute(text("""
-        SELECT acta_id, titulo, fecha, resultado,
-               votos_afirmativos, votos_negativos, abstenciones, ausentes
-        FROM actas_cabecera
-        WHERE fecha IS NOT NULL
-        ORDER BY fecha DESC, acta_id DESC
-        LIMIT :limit
-    """), {"limit": limit})
-    df = pd.DataFrame(result.fetchall(), columns=result.keys())
-    db.close()
-    df['titulo'] = df['titulo'].apply(limpiar)
-    df['tema_madre'] = df['titulo'].apply(extraer_tema_madre)
-    return df
-
+    try:
+        result = db.execute(text("""
+            SELECT 
+                acta_id, 
+                TO_DATE(fecha, 'DD/MM/YYYY') as fecha,
+                asunto,
+                resultado,
+                afirmativos,
+                negativos,
+                abstenciones,
+                ausentes
+            FROM votaciones_hcdn
+            WHERE asunto IS NOT NULL AND asunto != ''
+            ORDER BY TO_DATE(fecha, 'DD/MM/YYYY') DESC, acta_id DESC
+            LIMIT :limit OFFSET :offset
+        """), {"limit": limit, "offset": offset})
+        df = pd.DataFrame(result.fetchall(), columns=['acta_id', 'fecha', 'asunto', 'resultado', 'afirmativos', 'negativos', 'abstenciones', 'ausentes'])
+        df['asunto'] = df['asunto'].apply(limpiar)
+        return df
+    finally:
+        db.close()
 
 @st.cache_data(ttl=3600)
-def cargar_detalle_votacion(acta_id):
+def contar_votaciones():
+    """Cuenta total de votaciones."""
     db = SessionLocal()
-    result = db.execute(text("""
-        SELECT l.nombre_completo, l.bloque, l.distrito, v.voto_individual
-        FROM votos v
-        JOIN legisladores l ON l.id = v.legislador_id
-        WHERE v.acta_id = :acta_id
-        ORDER BY l.bloque, l.nombre_completo
-    """), {"acta_id": acta_id})
-    df = pd.DataFrame(result.fetchall(), columns=result.keys())
-    db.close()
-    df['bloque'] = df['bloque'].apply(limpiar)
-    return df
-
+    try:
+        result = db.execute(text("""
+            SELECT COUNT(*) FROM votaciones_hcdn
+            WHERE asunto IS NOT NULL AND asunto != ''
+        """))
+        return result.scalar()
+    finally:
+        db.close()
 
 @st.cache_data(ttl=3600)
-def cargar_sesiones():
+def cargar_votaciones_ajustadas(limit=10):
+    """Votaciones con resultado ajustado (diferencia < 20 votos)."""
     db = SessionLocal()
-    result = db.execute(text("""
-        SELECT s.id, s.fecha, s.tipo_periodo, s.tipo_reunion,
-               s.duracion_horas, s.hubo_quorum, s.periodo_id
-        FROM sesiones s
-        ORDER BY s.fecha DESC NULLS LAST
-    """))
-    df = pd.DataFrame(result.fetchall(), columns=result.keys())
-    db.close()
-    return df
-
+    try:
+        result = db.execute(text("""
+            SELECT 
+                acta_id,
+                TO_DATE(fecha, 'DD/MM/YYYY') as fecha,
+                asunto,
+                resultado,
+                afirmativos,
+                negativos,
+                ABS(afirmativos - negativos) as diferencia
+            FROM votaciones_hcdn
+            WHERE asunto IS NOT NULL 
+              AND asunto != ''
+              AND afirmativos > 0 
+              AND negativos > 0
+              AND ABS(afirmativos - negativos) < 20
+            ORDER BY diferencia ASC, TO_DATE(fecha, 'DD/MM/YYYY') DESC
+            LIMIT :limit
+        """), {"limit": limit})
+        df = pd.DataFrame(result.fetchall(), columns=['acta_id', 'fecha', 'asunto', 'resultado', 'afirmativos', 'negativos', 'diferencia'])
+        df['asunto'] = df['asunto'].apply(limpiar)
+        return df
+    finally:
+        db.close()
 
 @st.cache_data(ttl=3600)
-def cargar_temario_sesion(sesion_id):
+def cargar_votos_votacion(acta_id):
+    """Carga votos individuales de una votación."""
     db = SessionLocal()
-    result = db.execute(text("""
-        SELECT item_nro, descripcion
-        FROM temario_items
-        WHERE sesion_id = :id
-        ORDER BY item_nro
-    """), {"id": sesion_id})
-    df = pd.DataFrame(result.fetchall(), columns=result.keys())
-    db.close()
-    return df
-
+    try:
+        result = db.execute(text("""
+            SELECT 
+                vh.legislador,
+                vh.bloque,
+                vh.voto,
+                l.nombre_completo
+            FROM votos_hcdn vh
+            LEFT JOIN legisladores l ON vh.legislador_id = l.id
+            WHERE vh.acta_id = :acta_id
+            ORDER BY vh.bloque, vh.legislador
+        """), {"acta_id": acta_id})
+        return pd.DataFrame(result.fetchall(), columns=['legislador_raw', 'bloque', 'voto', 'nombre'])
+    finally:
+        db.close()
 
 @st.cache_data(ttl=3600)
-def cargar_comisiones():
+def buscar_votaciones(termino, limit=50):
+    """Busca votaciones por término."""
     db = SessionLocal()
-    result = db.execute(text("""
-        SELECT c.id, c.slug,
-               COUNT(DISTINCT ci.id) as total_integrantes,
-               COUNT(DISTINCT cr.id) as total_reuniones,
-               COUNT(DISTINCT CASE WHEN cr.tipo = 'INVITADO' THEN cr.id END) as reuniones_con_invitados
-        FROM comisiones c
-        LEFT JOIN comision_integrantes ci ON ci.comision_id = c.id
-        LEFT JOIN comision_reuniones cr ON cr.comision_id = c.id
-        GROUP BY c.id, c.slug
-        ORDER BY c.slug
-    """))
-    df = pd.DataFrame(result.fetchall(), columns=result.keys())
-    db.close()
-    df['nombre'] = df['slug'].map(NOMBRES_COMISIONES).fillna(df['slug'])
-    return df
+    try:
+        result = db.execute(text("""
+            SELECT 
+                acta_id,
+                TO_DATE(fecha, 'DD/MM/YYYY') as fecha,
+                asunto,
+                resultado,
+                afirmativos,
+                negativos,
+                abstenciones,
+                ausentes
+            FROM votaciones_hcdn
+            WHERE asunto ILIKE :termino
+            ORDER BY TO_DATE(fecha, 'DD/MM/YYYY') DESC
+            LIMIT :limit
+        """), {"termino": f"%{termino}%", "limit": limit})
+        df = pd.DataFrame(result.fetchall(), columns=['acta_id', 'fecha', 'asunto', 'resultado', 'afirmativos', 'negativos', 'abstenciones', 'ausentes'])
+        df['asunto'] = df['asunto'].apply(limpiar)
+        return df
+    finally:
+        db.close()
 
-
-@st.cache_data(ttl=3600)
-def cargar_integrantes(comision_id):
-    db = SessionLocal()
-    result = db.execute(text("""
-        SELECT ci.cargo, ci.nombre_raw, ci.bloque, ci.distrito
-        FROM comision_integrantes ci
-        WHERE ci.comision_id = :id
-        ORDER BY
-            CASE ci.cargo
-                WHEN 'PRESIDENTE' THEN 1
-                WHEN 'VICEPRESIDENTE 1°' THEN 2
-                WHEN 'VICEPRESIDENTE 2°' THEN 3
-                WHEN 'SECRETARIO' THEN 4
-                ELSE 5
-            END
-    """), {"id": comision_id})
-    df = pd.DataFrame(result.fetchall(), columns=result.keys())
-    db.close()
-    return df
-
-
-@st.cache_data(ttl=3600)
-def cargar_reuniones(comision_id):
-    db = SessionLocal()
-    result = db.execute(text("""
-        SELECT fecha, tipo, descripcion
-        FROM comision_reuniones
-        WHERE comision_id = :id
-        ORDER BY fecha DESC
-    """), {"id": comision_id})
-    df = pd.DataFrame(result.fetchall(), columns=result.keys())
-    db.close()
-    return df
-
+# ============================================
+# RENDER
+# ============================================
 
 def render():
-    """Renderiza la página de actividad"""
+    st.markdown("<div style='height: 1.5rem'></div>", unsafe_allow_html=True)
+    st.title("Votaciones")
+    st.markdown("<div class='page-subtitle'>Como voto cada legislador en la Camara de Diputados</div>", unsafe_allow_html=True)
     
-    st.title("Actividad Legislativa")
-    st.markdown("<div class='page-subtitle'>Votaciones, sesiones y comisiones del Congreso</div>", unsafe_allow_html=True)
-
-    tabs = st.tabs(["🗳️ Votaciones", "📋 Sesiones", "👥 Comisiones"])
-
-    # ========== TAB VOTACIONES ==========
-    with tabs[0]:
-        col_f1, col_f2 = st.columns([3, 1])
-        with col_f1:
-            busqueda = st.text_input("🔍 Buscar por tema", placeholder="Ej: Presupuesto, Laboral...", key="vot_busq")
-        with col_f2:
-            limit = st.selectbox("Mostrar", [50, 100, 200, 500], index=1, key="vot_lim")
-
-        df = cargar_votaciones(limit)
+    # Tabs principales
+    tab1, tab2 = st.tabs(["Todas las votaciones", "Votaciones ajustadas"])
+    
+    # ========================================
+    # TAB 1: TODAS LAS VOTACIONES
+    # ========================================
+    with tab1:
+        # Controles
+        col1, col2, col3 = st.columns([3, 1, 1])
         
+        with col1:
+            busqueda = st.text_input(
+                "Buscar por tema", 
+                placeholder="Ej: Presupuesto, Jubilaciones, Ley Bases...",
+                key="vot_busq"
+            )
+        
+        with col2:
+            cant_mostrar = st.selectbox(
+                "Mostrar",
+                [10, 20, 50],
+                index=0,
+                key="vot_cant"
+            )
+        
+        with col3:
+            total_votaciones = contar_votaciones()
+            st.metric("Total disponible", f"{total_votaciones:,}")
+        
+        # Paginación
+        if 'pagina_votaciones' not in st.session_state:
+            st.session_state['pagina_votaciones'] = 0
+        
+        # Cargar datos
         if busqueda:
-            df = df[df['titulo'].str.contains(busqueda, case=False, na=False)]
-
-        total_leyes = df['tema_madre'].nunique()
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Temas votados", total_leyes)
-        col2.metric("Votaciones nominales", len(df))
-        col3.metric("Período", f"{df['fecha'].min()} – {df['fecha'].max()}" if not df.empty else "—")
-
-        st.markdown("---")
-
-        grupos = df.groupby(['tema_madre', 'fecha'], sort=False)
-
-        for (tema, fecha), grp in grupos:
-            total_afirm = int(grp['votos_afirmativos'].fillna(0).max())
-            total_neg = int(grp['votos_negativos'].fillna(0).max())
-
-            with st.expander(f"**{tema}** — {fecha} · {total_afirm}✓ {total_neg}✗"):
-                acta_id = int(grp.iloc[0]['acta_id'])
-                df_detalle = cargar_detalle_votacion(acta_id)
-                
-                if not df_detalle.empty:
-                    col_a, col_b = st.columns(2)
-                    
-                    with col_a:
-                        afavor = df_detalle[df_detalle['voto_individual'] == 'AFIRMATIVO']
-                        st.markdown(f"**🟢 A favor — {len(afavor)}**")
-                        for bloque, grp_b in afavor.groupby('bloque'):
-                            st.markdown(f"*{bloque or 'Sin bloque'}* ({len(grp_b)})")
-
-                    with col_b:
-                        encontra = df_detalle[df_detalle['voto_individual'] == 'NEGATIVO']
-                        st.markdown(f"**🔴 En contra — {len(encontra)}**")
-                        for bloque, grp_b in encontra.groupby('bloque'):
-                            st.markdown(f"*{bloque or 'Sin bloque'}* ({len(grp_b)})")
-
-    # ========== TAB SESIONES ==========
-    with tabs[1]:
-        df_ses = cargar_sesiones()
-
-        if df_ses.empty:
-            st.warning("No hay sesiones cargadas.")
+            df = buscar_votaciones(busqueda, limit=100)
+            st.caption(f"Resultados para '{busqueda}': {len(df)} votaciones")
         else:
-            df_ses['fecha'] = pd.to_datetime(df_ses['fecha'])
-            df_ses['año'] = df_ses['fecha'].dt.year
-            df_ses['duracion_horas'] = pd.to_numeric(df_ses['duracion_horas'], errors='coerce')
-
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Total sesiones", len(df_ses))
-            col2.metric("Con quórum", df_ses[df_ses['hubo_quorum'] == 'Sí'].shape[0])
-            col3.metric("Sin quórum", df_ses[df_ses['hubo_quorum'] == 'No'].shape[0])
-            col4.metric("Duración promedio", f"{df_ses['duracion_horas'].mean():.1f}h")
-
-            st.markdown("---")
-
-            col_f1, col_f2 = st.columns(2)
-            with col_f1:
-                años = ["Todos"] + sorted(df_ses['año'].dropna().unique().astype(int).tolist(), reverse=True)
-                año_sel = st.selectbox("Año", años, key="ses_año")
-            with col_f2:
-                tipos = ["Todos"] + sorted(df_ses['tipo_periodo'].dropna().unique().tolist())
-                tipo_sel = st.selectbox("Tipo", tipos, key="ses_tipo")
-
-            df_filtrado = df_ses.copy()
-            if año_sel != "Todos":
-                df_filtrado = df_filtrado[df_filtrado['año'] == int(año_sel)]
-            if tipo_sel != "Todos":
-                df_filtrado = df_filtrado[df_filtrado['tipo_periodo'] == tipo_sel]
-
-            st.markdown("### Duración por sesión")
-            if not df_filtrado.empty:
-                chart_data = df_filtrado.set_index('fecha')[['duracion_horas']].sort_index()
-                st.bar_chart(chart_data)
-
-            st.dataframe(
-                df_filtrado[['fecha', 'tipo_periodo', 'tipo_reunion', 'duracion_horas', 'hubo_quorum']].rename(columns={
-                    'fecha': 'Fecha', 'tipo_periodo': 'Período', 'tipo_reunion': 'Tipo',
-                    'duracion_horas': 'Duración (hs)', 'hubo_quorum': 'Quórum',
-                }),
-                use_container_width=True, hide_index=True
-            )
-
-    # ========== TAB COMISIONES ==========
-    with tabs[2]:
-        df_com = cargar_comisiones()
-
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Comisiones", len(df_com))
-        col2.metric("Reuniones", int(df_com['total_reuniones'].sum()))
-        col3.metric("Con invitados", int(df_com['reuniones_con_invitados'].sum()))
-
-        st.markdown("---")
-
-        busqueda_com = st.text_input("🔍 Buscar comisión", placeholder="Ej: Justicia, Presupuesto...", key="com_busq")
+            offset = st.session_state['pagina_votaciones'] * cant_mostrar
+            df = cargar_votaciones_hcdn(limit=cant_mostrar, offset=offset)
         
-        df_com_filtrado = df_com.copy()
-        if busqueda_com:
-            df_com_filtrado = df_com_filtrado[df_com_filtrado['nombre'].str.contains(busqueda_com, case=False, na=False)]
-
-        col_lista, col_detalle = st.columns([1, 2])
-
-        with col_lista:
-            st.markdown("### Comisiones")
-            st.dataframe(
-                df_com_filtrado[['nombre', 'total_integrantes', 'total_reuniones']].rename(columns={
-                    'nombre': 'Comisión', 'total_integrantes': 'Integrantes', 'total_reuniones': 'Reuniones',
-                }),
-                use_container_width=True, hide_index=True, height=400
-            )
-
-        with col_detalle:
-            if not df_com_filtrado.empty:
-                nombres_com = df_com_filtrado['nombre'].tolist()
-                seleccionada = st.selectbox("Seleccionar comisión", nombres_com, key="com_sel")
-                row = df_com_filtrado[df_com_filtrado['nombre'] == seleccionada].iloc[0]
-                comision_id = int(row['id'])
-
-                st.markdown(f"### {seleccionada}")
+        if df.empty:
+            st.info("No se encontraron votaciones.")
+        else:
+            # Mostrar votaciones
+            for _, row in df.iterrows():
+                fecha_str = row['fecha'].strftime('%d/%m/%Y') if pd.notna(row['fecha']) else '-'
                 
-                col_c1, col_c2 = st.columns(2)
-                col_c1.metric("Integrantes", int(row['total_integrantes']))
-                col_c2.metric("Reuniones", int(row['total_reuniones']))
-
-                sub_tabs = st.tabs(["Integrantes", "Reuniones"])
-
-                with sub_tabs[0]:
-                    df_int = cargar_integrantes(comision_id)
-                    if df_int.empty:
-                        st.info("Sin integrantes registrados.")
-                    else:
-                        st.dataframe(
-                            df_int[['cargo', 'nombre_raw', 'bloque']].rename(columns={
-                                'cargo': 'Cargo', 'nombre_raw': 'Nombre', 'bloque': 'Bloque'
-                            }),
-                            use_container_width=True, hide_index=True
-                        )
-
-                with sub_tabs[1]:
-                    df_reu = cargar_reuniones(comision_id)
-                    if df_reu.empty:
-                        st.info("Sin reuniones registradas.")
-                    else:
-                        st.dataframe(
-                            df_reu[['fecha', 'tipo', 'descripcion']].rename(columns={
-                                'fecha': 'Fecha', 'tipo': 'Tipo', 'descripcion': 'Descripción'
-                            }),
-                            use_container_width=True, hide_index=True
-                        )
+                # Determinar color según resultado
+                if row['afirmativos'] > row['negativos']:
+                    color_borde = "#059669"  # Verde
+                    resultado_texto = "APROBADO"
+                elif row['negativos'] > row['afirmativos']:
+                    color_borde = "#DC2626"  # Rojo
+                    resultado_texto = "RECHAZADO"
+                else:
+                    color_borde = "#6B7280"  # Gris
+                    resultado_texto = row['resultado'] or '-'
+                
+                with st.container():
+                    st.markdown(f"""
+                    <div style="border-left: 4px solid {color_borde}; padding: 0.8rem 1rem; margin-bottom: 0.8rem; background: white; border-radius: 0 8px 8px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem;">
+                            <div style="flex: 1;">
+                                <div style="font-weight: 600; color: #1F2937; margin-bottom: 0.3rem;">{row['asunto'][:200]}{'...' if len(row['asunto']) > 200 else ''}</div>
+                                <div style="font-size: 0.85rem; color: #6B7280;">{fecha_str}</div>
+                            </div>
+                            <div style="text-align: right; min-width: 120px;">
+                                <div style="font-size: 0.9rem;">
+                                    <span style="color: #059669; font-weight: 600;">{row['afirmativos'] or 0} a favor</span>
+                                    <span style="color: #6B7280;"> · </span>
+                                    <span style="color: #DC2626; font-weight: 600;">{row['negativos'] or 0} en contra</span>
+                                </div>
+                                <div style="font-size: 0.8rem; color: #6B7280;">
+                                    {row['abstenciones'] or 0} abst. · {row['ausentes'] or 0} aus.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Expander para ver detalle de votos
+                    with st.expander(f"Ver votos individuales"):
+                        df_votos = cargar_votos_votacion(row['acta_id'])
+                        
+                        if not df_votos.empty:
+                            col_a, col_b, col_c = st.columns(3)
+                            
+                            with col_a:
+                                afavor = df_votos[df_votos['voto'] == 'AFIRMATIVO']
+                                st.markdown(f"**A favor ({len(afavor)})**")
+                                for bloque in afavor['bloque'].unique():
+                                    n = len(afavor[afavor['bloque'] == bloque])
+                                    st.caption(f"{bloque or 'Sin bloque'}: {n}")
+                            
+                            with col_b:
+                                encontra = df_votos[df_votos['voto'] == 'NEGATIVO']
+                                st.markdown(f"**En contra ({len(encontra)})**")
+                                for bloque in encontra['bloque'].unique():
+                                    n = len(encontra[encontra['bloque'] == bloque])
+                                    st.caption(f"{bloque or 'Sin bloque'}: {n}")
+                            
+                            with col_c:
+                                ausentes = df_votos[df_votos['voto'] == 'AUSENTE']
+                                st.markdown(f"**Ausentes ({len(ausentes)})**")
+                                for bloque in ausentes['bloque'].unique():
+                                    n = len(ausentes[ausentes['bloque'] == bloque])
+                                    st.caption(f"{bloque or 'Sin bloque'}: {n}")
+                        else:
+                            st.caption("No hay datos de votos individuales para esta votación.")
+            
+            # Controles de paginación (solo si no hay búsqueda)
+            if not busqueda:
+                st.markdown("---")
+                col1, col2, col3 = st.columns([1, 2, 1])
+                
+                with col1:
+                    if st.session_state['pagina_votaciones'] > 0:
+                        if st.button("← Anteriores"):
+                            st.session_state['pagina_votaciones'] -= 1
+                            st.rerun()
+                
+                with col2:
+                    pagina_actual = st.session_state['pagina_votaciones'] + 1
+                    total_paginas = (total_votaciones // cant_mostrar) + 1
+                    st.markdown(f"<div style='text-align: center; color: #6B7280;'>Página {pagina_actual} de {total_paginas}</div>", unsafe_allow_html=True)
+                
+                with col3:
+                    if (st.session_state['pagina_votaciones'] + 1) * cant_mostrar < total_votaciones:
+                        if st.button("Siguientes →"):
+                            st.session_state['pagina_votaciones'] += 1
+                            st.rerun()
+    
+    # ========================================
+    # TAB 2: VOTACIONES AJUSTADAS
+    # ========================================
+    with tab2:
+        st.markdown("### Votaciones mas renidas")
+        st.caption("Votaciones donde la diferencia entre a favor y en contra fue menor a 20 votos")
+        
+        df_ajustadas = cargar_votaciones_ajustadas(limit=20)
+        
+        if df_ajustadas.empty:
+            st.info("No se encontraron votaciones ajustadas.")
+        else:
+            for _, row in df_ajustadas.iterrows():
+                fecha_str = row['fecha'].strftime('%d/%m/%Y') if pd.notna(row['fecha']) else '-'
+                
+                st.markdown(f"""
+                <div style="border-left: 4px solid #F59E0B; padding: 0.8rem 1rem; margin-bottom: 0.8rem; background: #FFFBEB; border-radius: 0 8px 8px 0;">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                        <div style="flex: 1;">
+                            <div style="font-weight: 600; color: #1F2937;">{row['asunto'][:200]}{'...' if len(str(row['asunto'])) > 200 else ''}</div>
+                            <div style="font-size: 0.85rem; color: #6B7280; margin-top: 0.3rem;">{fecha_str}</div>
+                        </div>
+                        <div style="text-align: right; min-width: 150px;">
+                            <div style="background: #FEF3C7; padding: 0.3rem 0.6rem; border-radius: 4px; display: inline-block;">
+                                <span style="font-weight: 700; color: #92400E;">Diferencia: {int(row['diferencia'])} votos</span>
+                            </div>
+                            <div style="font-size: 0.9rem; margin-top: 0.3rem;">
+                                <span style="color: #059669;">{row['afirmativos']}</span> vs 
+                                <span style="color: #DC2626;">{row['negativos']}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)

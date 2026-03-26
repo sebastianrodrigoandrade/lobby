@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Lobby - Pagina de Estadisticas
-Incluye: Leyes por año, DNUs, metricas generales
+Lobby - Página de Datos
+Exportación de datasets, metodología y contacto
 """
 import streamlit as st
 import pandas as pd
@@ -9,301 +9,252 @@ from sqlalchemy import text
 from src.database import SessionLocal
 
 # ============================================
-# FUNCIONES DE CARGA
+# FUNCIONES DE CARGA PARA EXPORTAR
 # ============================================
 
 @st.cache_data(ttl=3600)
-def cargar_leyes_por_año():
+def exportar_legisladores():
     db = SessionLocal()
     try:
         result = db.execute(text("""
             SELECT 
-                EXTRACT(YEAR FROM fecha_ingreso)::int as año,
-                estado,
-                COUNT(*) as total
-            FROM proyectos
-            WHERE fecha_ingreso IS NOT NULL
-              AND estado IN ('LEY', 'RESOLUCION', 'DECLARACION', 'MENSAJE')
-            GROUP BY año, estado
-            ORDER BY año DESC, total DESC
+                nombre_completo, camara, bloque, distrito, mandato_hasta
+            FROM legisladores
+            WHERE mandato_hasta >= CURRENT_DATE
+            ORDER BY camara, nombre_completo
         """))
-        df = pd.DataFrame(result.fetchall(), columns=result.keys())
+        return pd.DataFrame(result.fetchall(), columns=['Nombre', 'Camara', 'Bloque', 'Distrito', 'Mandato hasta'])
     finally:
         db.close()
-    return df
-
 
 @st.cache_data(ttl=3600)
-def cargar_dnus():
+def exportar_patrimonio():
     db = SessionLocal()
     try:
         result = db.execute(text("""
             SELECT 
-                EXTRACT(YEAR FROM fecha_ingreso)::int as año,
-                COUNT(*) as total
-            FROM proyectos
-            WHERE nro_expediente ILIKE '%-JGM-%'
-              AND titulo ILIKE '%DECRETO DE NECESIDAD Y URGENCIA%'
-            GROUP BY año
-            ORDER BY año DESC
+                d.funcionario_apellido_nombre as nombre,
+                d.anio,
+                CASE WHEN d.organismo ILIKE '%SENADO%' THEN 'Senadores' ELSE 'Diputados' END as camara,
+                d.patrimonio_neto,
+                d.total_bienes,
+                d.total_deudas
+            FROM ddjj_legisladores d
+            WHERE d.patrimonio_neto > 0
+            ORDER BY d.anio DESC, d.patrimonio_neto DESC
         """))
-        df = pd.DataFrame(result.fetchall(), columns=result.keys())
+        return pd.DataFrame(result.fetchall(), columns=['Nombre', 'Anio', 'Camara', 'Patrimonio Neto', 'Total Bienes', 'Total Deudas'])
     finally:
         db.close()
-    return df
-
 
 @st.cache_data(ttl=3600)
-def cargar_dnus_detalle():
+def exportar_votaciones():
     db = SessionLocal()
     try:
         result = db.execute(text("""
             SELECT 
-                nro_expediente,
-                titulo,
-                fecha_ingreso,
-                estado
-            FROM proyectos
-            WHERE nro_expediente ILIKE '%-JGM-%'
-              AND titulo ILIKE '%DECRETO DE NECESIDAD Y URGENCIA%'
-            ORDER BY fecha_ingreso DESC
+                acta_id,
+                fecha,
+                asunto,
+                resultado,
+                afirmativos,
+                negativos,
+                abstenciones,
+                ausentes
+            FROM votaciones_hcdn
+            WHERE asunto IS NOT NULL AND asunto != ''
+            ORDER BY fecha DESC
+            LIMIT 1000
         """))
-        df = pd.DataFrame(result.fetchall(), columns=result.keys())
+        return pd.DataFrame(result.fetchall(), columns=['Acta ID', 'Fecha', 'Asunto', 'Resultado', 'Afirmativos', 'Negativos', 'Abstenciones', 'Ausentes'])
     finally:
         db.close()
-    return df
-
 
 @st.cache_data(ttl=3600)
-def cargar_metricas_db():
+def cargar_resumen_datos():
     db = SessionLocal()
     try:
-        votos = db.execute(text("SELECT COUNT(*) FROM votos")).scalar() or 0
-        legisladores = db.execute(text("SELECT COUNT(*) FROM legisladores")).scalar() or 0
-        proyectos = db.execute(text("SELECT COUNT(*) FROM proyectos")).scalar() or 0
-        sesiones = db.execute(text("SELECT COUNT(*) FROM sesiones")).scalar() or 0
-        comisiones = db.execute(text("SELECT COUNT(*) FROM comisiones")).scalar() or 0
-        ddjj = db.execute(text("SELECT COUNT(*) FROM ddjj_legisladores")).scalar() or 0
+        stats = {}
+        
+        result = db.execute(text("SELECT COUNT(*) FROM legisladores WHERE mandato_hasta >= CURRENT_DATE"))
+        stats['legisladores_vigentes'] = result.scalar()
+        
+        result = db.execute(text("SELECT COUNT(*) FROM ddjj_legisladores WHERE patrimonio_neto > 0"))
+        stats['ddjj_total'] = result.scalar()
+        
+        result = db.execute(text("SELECT COUNT(DISTINCT anio) FROM ddjj_legisladores WHERE patrimonio_neto > 0"))
+        stats['ddjj_anios'] = result.scalar()
+        
+        result = db.execute(text("SELECT COUNT(*) FROM votaciones_hcdn"))
+        stats['votaciones'] = result.scalar()
+        
+        result = db.execute(text("SELECT COUNT(*) FROM votos_hcdn"))
+        stats['votos'] = result.scalar()
+        
+        result = db.execute(text("SELECT COUNT(*) FROM audiencias_ejecutivo"))
+        stats['audiencias'] = result.scalar()
+        
+        return stats
     finally:
         db.close()
-    return {
-        'votos': votos,
-        'legisladores': legisladores,
-        'proyectos': proyectos,
-        'sesiones': sesiones,
-        'comisiones': comisiones,
-        'ddjj': ddjj
-    }
-
-
-@st.cache_data(ttl=3600)
-def cargar_votos_por_camara():
-    db = SessionLocal()
-    try:
-        result = db.execute(text("""
-            SELECT 
-                COALESCE(a.camara, 'Diputados') as camara,
-                COUNT(v.id) as votos
-            FROM votos v
-            LEFT JOIN actas_cabecera a ON a.acta_id = v.acta_id
-            GROUP BY camara
-        """))
-        df = pd.DataFrame(result.fetchall(), columns=result.keys())
-    finally:
-        db.close()
-    return df
-
-
-@st.cache_data(ttl=3600)
-def cargar_proyectos_por_tipo():
-    db = SessionLocal()
-    try:
-        result = db.execute(text("""
-            SELECT 
-                COALESCE(estado, 'SIN ESTADO') as tipo,
-                COUNT(*) as total
-            FROM proyectos
-            WHERE fecha_ingreso >= '2020-01-01'
-            GROUP BY estado
-            ORDER BY total DESC
-            LIMIT 10
-        """))
-        df = pd.DataFrame(result.fetchall(), columns=result.keys())
-    finally:
-        db.close()
-    return df
-
 
 # ============================================
-# FUNCION RENDER
+# RENDER
 # ============================================
 
 def render():
-    """Renderiza la pagina de estadisticas."""
-    
     st.markdown("<div style='height: 1.5rem'></div>", unsafe_allow_html=True)
-    st.title("Estadisticas")
-    st.markdown("<div class='page-subtitle'>Metricas y datos agregados del Congreso de la Nacion</div>", unsafe_allow_html=True)
-
-    # METRICAS GENERALES
-    try:
-        metricas = cargar_metricas_db()
-        
-        st.markdown("### Base de datos")
-        
-        col1, col2, col3, col4, col5, col6 = st.columns(6)
-        col1.metric("Votos", f"{metricas['votos']:,}")
-        col2.metric("Legisladores", f"{metricas['legisladores']:,}")
-        col3.metric("Proyectos", f"{metricas['proyectos']:,}")
-        col4.metric("Sesiones", f"{metricas['sesiones']:,}")
-        col5.metric("Comisiones", f"{metricas['comisiones']:,}")
-        col6.metric("DDJJ", f"{metricas['ddjj']:,}")
-    except Exception as e:
-        st.error(f"Error al cargar metricas: {e}")
-        return
-
+    st.title("Datos Abiertos")
+    st.markdown("<div class='page-subtitle'>Descarga los datasets para tu investigacion periodistica</div>", unsafe_allow_html=True)
+    
+    # ========================================
+    # RESUMEN DE DATOS DISPONIBLES
+    # ========================================
+    
+    stats = cargar_resumen_datos()
+    
+    st.markdown("### Datos disponibles")
+    
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Legisladores vigentes", f"{stats['legisladores_vigentes']:,}")
+    col2.metric("Declaraciones juradas", f"{stats['ddjj_total']:,}")
+    col3.metric("Votaciones HCDN", f"{stats['votaciones']:,}")
+    
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Votos individuales", f"{stats['votos']:,}")
+    col2.metric("Audiencias ejecutivo", f"{stats['audiencias']:,}")
+    col3.metric("Anios de DDJJ", f"{stats['ddjj_anios']}")
+    
     st.markdown("---")
-
-    # TABS PRINCIPALES
-    tabs = st.tabs(["Leyes y Proyectos", "DNUs", "Distribuciones"])
-
-    # --- TAB LEYES ---
-    with tabs[0]:
-        df_leyes = cargar_leyes_por_año()
-
-        if df_leyes.empty:
-            st.info("Sin datos de leyes.")
-        else:
-            total_leyes = int(df_leyes[df_leyes['estado'] == 'LEY']['total'].sum())
-            total_res = int(df_leyes[df_leyes['estado'] == 'RESOLUCION']['total'].sum())
-            total_decl = int(df_leyes[df_leyes['estado'] == 'DECLARACION']['total'].sum())
-
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Total leyes (historico)", f"{total_leyes:,}")
-            col2.metric("Resoluciones", f"{total_res:,}")
-            col3.metric("Declaraciones", f"{total_decl:,}")
-
-            st.markdown("---")
-
-            st.markdown("### Leyes sancionadas por año")
-            
-            df_pivot = df_leyes.pivot_table(
-                index='año', columns='estado', values='total', fill_value=0
-            ).reset_index()
-            df_pivot = df_pivot[df_pivot['año'] >= 2008].sort_values('año')
-
-            if 'LEY' in df_pivot.columns:
-                st.bar_chart(df_pivot.set_index('año')[['LEY']])
-
-            st.markdown("---")
-
-            st.markdown("### Actividad legislativa por año")
-            df_tabla = df_leyes[df_leyes['año'] >= 2008].pivot_table(
-                index='año', columns='estado', values='total', fill_value=0
-            ).reset_index().sort_values('año', ascending=False)
-            
-            st.dataframe(df_tabla, use_container_width=True, hide_index=True)
-
-    # --- TAB DNUs ---
-    with tabs[1]:
-        df_dnus = cargar_dnus()
-        df_dnus_det = cargar_dnus_detalle()
-
-        if df_dnus.empty:
-            st.info("Sin datos de DNUs.")
-        else:
-            total_dnus = int(df_dnus['total'].sum())
-            año_max = int(df_dnus['año'].max())
-            dnus_max = int(df_dnus.loc[df_dnus['total'].idxmax(), 'total'])
-            año_mas_dnus = int(df_dnus.loc[df_dnus['total'].idxmax(), 'año'])
-
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Total DNUs registrados", total_dnus)
-            col2.metric("Ultimo año con datos", año_max)
-            col3.metric("Año con mas DNUs", f"{año_mas_dnus} ({dnus_max})")
-
-            st.caption("Datos disponibles: 2008-2023. Los DNUs del periodo 2024-2025 no estan publicados en el portal de datos abiertos.")
-
-            st.markdown("---")
-
-            st.markdown("### DNUs por año")
-            st.bar_chart(df_dnus.set_index('año')[['total']].sort_index())
-
-            st.markdown("---")
-
-            st.markdown("### Listado de DNUs")
-            
-            busqueda_dnu = st.text_input("Buscar DNU", placeholder="Ej: jubilaciones, emergencia, exportaciones...")
-            
-            df_mostrar = df_dnus_det.copy()
-            if busqueda_dnu:
-                df_mostrar = df_mostrar[df_mostrar['titulo'].str.contains(busqueda_dnu, case=False, na=False)]
-
-            st.markdown(f"**{len(df_mostrar)} DNUs encontrados**")
-            
-            st.dataframe(
-                df_mostrar[['fecha_ingreso', 'nro_expediente', 'titulo']].rename(columns={
-                    'fecha_ingreso': 'Fecha',
-                    'nro_expediente': 'Expediente',
-                    'titulo': 'Descripcion',
-                }),
-                use_container_width=True,
-                hide_index=True
-            )
-
-    # --- TAB DISTRIBUCIONES ---
-    with tabs[2]:
-        col_d1, col_d2 = st.columns(2)
+    
+    # ========================================
+    # EXPORTAR DATASETS
+    # ========================================
+    
+    st.markdown("### Descargar datasets")
+    st.caption("Todos los datos son de fuentes publicas oficiales")
+    
+    tab1, tab2, tab3 = st.tabs(["Legisladores", "Patrimonio", "Votaciones"])
+    
+    with tab1:
+        st.markdown("**Legisladores vigentes**")
+        st.caption("Nombre, camara, bloque, distrito y fin de mandato")
         
-        with col_d1:
-            st.markdown("### Votos por camara")
-            df_votos_cam = cargar_votos_por_camara()
-            
-            if not df_votos_cam.empty:
-                for _, r in df_votos_cam.iterrows():
-                    camara = r['camara']
-                    votos = int(r['votos'])
-                    pct = votos / df_votos_cam['votos'].sum() * 100
-                    
-                    st.markdown(f"""
-                    <div style="background: white; border: 1px solid #E5E7EB; border-radius: 8px; padding: 1rem; margin-bottom: 0.5rem;">
-                        <div style="font-weight: 600; color: #1F2937;">{camara}</div>
-                        <div style="font-size: 1.5rem; font-weight: 700; color: #0F2240;">{votos:,}</div>
-                        <div style="font-size: 0.8rem; color: #6B7280;">{pct:.1f}% del total</div>
-                    </div>
-                    """, unsafe_allow_html=True)
+        if st.button("Preparar descarga", key="prep_leg"):
+            with st.spinner("Cargando datos..."):
+                df = exportar_legisladores()
+                st.success(f"{len(df)} legisladores")
+                st.download_button(
+                    "Descargar CSV",
+                    df.to_csv(index=False).encode('utf-8'),
+                    "legisladores_vigentes.csv",
+                    "text/csv",
+                    use_container_width=True
+                )
+                st.dataframe(df.head(10), use_container_width=True)
+    
+    with tab2:
+        st.markdown("**Declaraciones Juradas Patrimoniales**")
+        st.caption("Patrimonio neto, bienes y deudas por legislador y anio")
         
-        with col_d2:
-            st.markdown("### Proyectos por tipo (2020+)")
-            df_tipos = cargar_proyectos_por_tipo()
-            
-            if not df_tipos.empty:
-                st.bar_chart(df_tipos.set_index('tipo')['total'])
+        if st.button("Preparar descarga", key="prep_pat"):
+            with st.spinner("Cargando datos..."):
+                df = exportar_patrimonio()
+                st.success(f"{len(df)} registros")
+                st.download_button(
+                    "Descargar CSV",
+                    df.to_csv(index=False).encode('utf-8'),
+                    "patrimonio_legisladores.csv",
+                    "text/csv",
+                    use_container_width=True
+                )
+                st.dataframe(df.head(10), use_container_width=True)
+    
+    with tab3:
+        st.markdown("**Votaciones HCDN**")
+        st.caption("Ultimas 1000 votaciones con resultados")
         
-        st.markdown("---")
+        if st.button("Preparar descarga", key="prep_vot"):
+            with st.spinner("Cargando datos..."):
+                df = exportar_votaciones()
+                st.success(f"{len(df)} votaciones")
+                st.download_button(
+                    "Descargar CSV",
+                    df.to_csv(index=False).encode('utf-8'),
+                    "votaciones_hcdn.csv",
+                    "text/csv",
+                    use_container_width=True
+                )
+                st.dataframe(df.head(10), use_container_width=True)
+    
+    st.markdown("---")
+    
+    # ========================================
+    # METODOLOGIA
+    # ========================================
+    
+    st.markdown("### Metodologia")
+    
+    with st.expander("Fuentes de datos"):
+        st.markdown("""
+        | Dataset | Fuente | Actualizacion |
+        |---------|--------|---------------|
+        | Legisladores | HCDN / Senado | Manual |
+        | DDJJ Patrimoniales | Oficina Anticorrupcion (datos.jus.gob.ar) | Anual |
+        | Votaciones | HCDN (votaciones.hcdn.gob.ar) | Automatica (semanal) |
+        | Audiencias Ejecutivo | datos.gob.ar | Manual |
+        | Indicadores economicos | INDEC / BCRA | Manual |
+        """)
+    
+    with st.expander("Calculos y definiciones"):
+        st.markdown("""
+        **Patrimonio neto:** Total de bienes menos total de deudas, segun DDJJ.
         
-        st.markdown("### Fuentes de datos")
+        **Variacion real:** Ajusta el cambio patrimonial por inflacion.
+        - Formula: ((1 + var_nominal) / (1 + inflacion)) - 1
+        - Positivo = gano poder adquisitivo
+        - Negativo = perdio poder adquisitivo
         
-        col1, col2 = st.columns(2)
+        **Mediana:** Valor del medio cuando se ordenan todos los patrimonios. 
+        Es mas representativa que el promedio porque no se distorsiona con valores extremos.
         
-        with col1:
-            st.markdown("""
-            **Portal de Datos Abiertos HCDN**  
-            Votaciones nominales, proyectos, sesiones  
-            [datos.hcdn.gob.ar](https://datos.hcdn.gob.ar/)
-            
-            **Senado de la Nacion**  
-            Votaciones nominales del Senado  
-            [senado.gob.ar/votaciones](https://www.senado.gob.ar/votaciones)
-            """)
-        
-        with col2:
-            st.markdown("""
-            **Oficina Anticorrupcion**  
-            Declaraciones juradas de funcionarios  
-            [datos.jus.gob.ar](https://datos.jus.gob.ar/dataset/declaraciones-juradas-patrimoniales-integrales)
-            
-            **Series de Tiempo Argentina**  
-            IPC, RIPTE, tipo de cambio  
-            [apis.datos.gob.ar/series](https://apis.datos.gob.ar/series/)
-            """)
+        **Inflacion acumulada 2022-2024:** 493% (IPC INDEC)
+        """)
+    
+    with st.expander("Limitaciones"):
+        st.markdown("""
+        - **DDJJ:** Solo incluye lo declarado. El patrimonio real puede diferir.
+        - **Vinculacion:** No todas las DDJJ estan vinculadas a legisladores en nuestra base.
+        - **Votaciones:** Solo HCDN (Diputados). Senado en desarrollo.
+        - **Cobertura temporal:** DDJJ disponibles: 2019, 2020, 2021, 2022, 2024. Falta 2023.
+        """)
+    
+    st.markdown("---")
+    
+    # ========================================
+    # CONTACTO
+    # ========================================
+    
+    st.markdown("### Contacto")
+    
+    st.markdown("""
+    <div style="background: #F3F4F6; padding: 1.5rem; border-radius: 12px;">
+        <div style="font-size: 1.1rem; font-weight: 600; margin-bottom: 0.5rem;">Para consultas, sugerencias o reportar errores:</div>
+        <div style="font-size: 1rem; margin-bottom: 1rem;">
+            <a href="mailto:lobby.matufia@gmail.com" style="color: #2563EB; text-decoration: none;">
+                lobby.matufia@gmail.com
+            </a>
+        </div>
+        <div style="font-size: 0.9rem; color: #6B7280;">
+            Lobby es un proyecto de inteligencia publica que busca facilitar el acceso 
+            a informacion sobre el Congreso argentino para periodistas e investigadores.
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("""
+    <div style="text-align: center; color: #9CA3AF; font-size: 0.85rem; margin-top: 2rem;">
+        Todos los datos provienen de fuentes publicas oficiales.<br>
+        El codigo fuente esta disponible en GitHub.
+    </div>
+    """, unsafe_allow_html=True)
