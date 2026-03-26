@@ -1,349 +1,317 @@
+# -*- coding: utf-8 -*-
 """
-Lobby - Página de Inicio / Dashboard
+Lobby - Página de Inicio
+Dashboard para periodistas
 """
 import streamlit as st
 import pandas as pd
 from sqlalchemy import text
 from src.database import SessionLocal
 
+# ============================================
+# FUNCIONES DE CARGA
+# ============================================
 
 @st.cache_data(ttl=1800)
-def cargar_ultimas_votaciones(limit=5, tipo=None):
+def cargar_metricas():
     db = SessionLocal()
-    
-    filtros = ["fecha IS NOT NULL", "titulo IS NOT NULL"]
-    if tipo and tipo != "Todas":
-        if tipo == "Leyes":
-            filtros.append("(titulo ILIKE '%LEY%' OR resultado ILIKE '%LEY%')")
-        elif tipo == "DNUs":
-            filtros.append("titulo ILIKE '%DECRETO DE NECESIDAD%'")
-        elif tipo == "Resoluciones":
-            filtros.append("titulo ILIKE '%RESOLUCION%'")
-    
-    where = "WHERE " + " AND ".join(filtros)
-    
-    result = db.execute(text(f"""
-        SELECT acta_id, titulo, fecha, resultado,
-               votos_afirmativos, votos_negativos, abstenciones
-        FROM actas_cabecera
-        {where}
-        ORDER BY fecha DESC, acta_id DESC
-        LIMIT :limit
-    """), {"limit": limit})
-    df = pd.DataFrame(result.fetchall(), columns=result.keys())
-    db.close()
-    return df
-
+    try:
+        stats = {}
+        stats['legisladores'] = db.execute(text(
+            "SELECT COUNT(*) FROM legisladores WHERE mandato_hasta >= CURRENT_DATE"
+        )).scalar() or 0
+        
+        stats['votaciones'] = db.execute(text(
+            "SELECT COUNT(*) FROM votaciones_hcdn"
+        )).scalar() or 0
+        
+        stats['ddjj'] = db.execute(text(
+            "SELECT COUNT(DISTINCT cuit) FROM ddjj_legisladores WHERE patrimonio_neto > 0"
+        )).scalar() or 0
+        
+        return stats
+    finally:
+        db.close()
 
 @st.cache_data(ttl=1800)
-def cargar_ultimas_sesiones(limit=3):
+def buscar_legisladores(termino):
     db = SessionLocal()
-    result = db.execute(text("""
-        SELECT fecha, tipo_periodo, tipo_reunion, duracion_horas, hubo_quorum
-        FROM sesiones
-        WHERE fecha IS NOT NULL
-          AND duracion_horas IS NOT NULL
-          AND duracion_horas != ''
-          AND duracion_horas ~ '^[0-9.]+$'
-          AND duracion_horas::numeric > 0
-          AND tipo_periodo IS NOT NULL
-          AND tipo_periodo != ''
-        ORDER BY fecha DESC
-        LIMIT :limit
-    """), {"limit": limit})
-    df = pd.DataFrame(result.fetchall(), columns=result.keys())
-    db.close()
-    return df
+    try:
+        result = db.execute(text("""
+            SELECT id, nombre_completo, camara, bloque
+            FROM legisladores
+            WHERE mandato_hasta >= CURRENT_DATE
+              AND nombre_completo ILIKE :termino
+            ORDER BY nombre_completo
+            LIMIT 10
+        """), {"termino": f"%{termino}%"})
+        return pd.DataFrame(result.fetchall(), columns=['id', 'nombre', 'camara', 'bloque'])
+    finally:
+        db.close()
 
-
-@st.cache_data(ttl=3600)
-def cargar_metricas_generales():
+@st.cache_data(ttl=1800)
+def cargar_alertas_destacadas():
+    """Carga las alertas más importantes para mostrar en el dashboard."""
     db = SessionLocal()
+    try:
+        # Top 3 crecimiento patrimonial inusual
+        result = db.execute(text("""
+            WITH datos AS (
+                SELECT 
+                    d.funcionario_apellido_nombre as nombre,
+                    CASE WHEN d.organismo ILIKE '%SENADO%' THEN 'Senadores' ELSE 'Diputados' END as camara,
+                    MAX(CASE WHEN d.anio = 2022 THEN d.patrimonio_neto END) as pat_2022,
+                    MAX(CASE WHEN d.anio = 2024 THEN d.patrimonio_neto END) as pat_2024
+                FROM ddjj_legisladores d
+                WHERE d.patrimonio_neto > 0 AND d.anio IN (2022, 2024)
+                GROUP BY d.funcionario_apellido_nombre, d.organismo
+                HAVING COUNT(DISTINCT d.anio) = 2
+            ),
+            inflacion AS (
+                SELECT 
+                    (SELECT ipc_acumulado FROM indicadores_anuales WHERE anio = 2024) /
+                    (SELECT ipc_acumulado FROM indicadores_anuales WHERE anio = 2022) as ratio_ipc
+            )
+            SELECT 
+                d.nombre, d.camara,
+                d.pat_2022, d.pat_2024,
+                d.pat_2024 / d.pat_2022 as multiplicador,
+                (((d.pat_2024 / d.pat_2022) / i.ratio_ipc) - 1) * 100 as var_real
+            FROM datos d, inflacion i
+            WHERE d.pat_2022 > 0
+              AND (((d.pat_2024 / d.pat_2022) / i.ratio_ipc) - 1) * 100 > 100
+            ORDER BY var_real DESC
+            LIMIT 3
+        """))
+        return pd.DataFrame(result.fetchall(), columns=['nombre', 'camara', 'pat_2022', 'pat_2024', 'multiplicador', 'var_real'])
+    finally:
+        db.close()
 
-    leg = db.execute(text("""
-        SELECT COUNT(*) FROM legisladores
-        WHERE mandato_hasta >= CURRENT_DATE
-    """)).scalar()
-
-    votos = db.execute(text("SELECT COUNT(*) FROM votos")).scalar()
-    votos_hcdn = db.execute(text("SELECT COUNT(*) FROM votos_hcdn")).scalar()
-    total_votos = (votos or 0) + (votos_hcdn or 0)
-
-    sesiones = db.execute(text("""
-        SELECT COUNT(*) FROM sesiones
-        WHERE EXTRACT(YEAR FROM fecha) >= 2024
-    """)).scalar()
-
-    ddjj = db.execute(text("SELECT COUNT(*) FROM ddjj_legisladores WHERE patrimonio_neto > 0")).scalar()
-
-    db.close()
-    return {
-        'legisladores': leg or 0,
-        'votos': total_votos,
-        'sesiones': sesiones or 0,
-        'ddjj': ddjj or 0
-    }
-
-
-@st.cache_data(ttl=3600)
-def cargar_votaciones_ajustadas(anio=None, limit=5):
-    """Votaciones con menor diferencia de votos"""
+@st.cache_data(ttl=1800)
+def cargar_ultimas_votaciones(limit=5):
     db = SessionLocal()
-    
-    filtros = [
-        "fecha IS NOT NULL",
-        "votos_afirmativos > 0",
-        "votos_negativos > 0"
-    ]
-    
-    if anio and anio != "Todos":
-        filtros.append(f"EXTRACT(YEAR FROM fecha) = {anio}")
-    
-    where = "WHERE " + " AND ".join(filtros)
-    
-    result = db.execute(text(f"""
-        SELECT acta_id, titulo, fecha, resultado,
-               votos_afirmativos, votos_negativos,
-               ABS(votos_afirmativos - votos_negativos) as diferencia
-        FROM actas_cabecera
-        {where}
-        ORDER BY diferencia ASC
-        LIMIT :limit
-    """), {"limit": limit})
-    df = pd.DataFrame(result.fetchall(), columns=result.keys())
-    db.close()
-    return df
+    try:
+        result = db.execute(text("""
+            SELECT 
+                acta_id,
+                TO_DATE(fecha, 'DD/MM/YYYY') as fecha,
+                asunto,
+                afirmativos,
+                negativos
+            FROM votaciones_hcdn
+            WHERE asunto IS NOT NULL AND asunto != ''
+            ORDER BY TO_DATE(fecha, 'DD/MM/YYYY') DESC
+            LIMIT :limit
+        """), {"limit": limit})
+        df = pd.DataFrame(result.fetchall(), columns=['acta_id', 'fecha', 'asunto', 'afirmativos', 'negativos'])
+        return df
+    finally:
+        db.close()
 
-
-@st.cache_data(ttl=3600)
-def cargar_anios_disponibles():
-    """Años con votaciones disponibles"""
+@st.cache_data(ttl=1800)
+def cargar_votacion_mas_ajustada():
+    """La votación más reñida reciente."""
     db = SessionLocal()
-    result = db.execute(text("""
-        SELECT DISTINCT EXTRACT(YEAR FROM fecha)::int as anio
-        FROM actas_cabecera
-        WHERE fecha IS NOT NULL
-        ORDER BY anio DESC
-    """))
-    anios = [row[0] for row in result.fetchall()]
-    db.close()
-    return anios
+    try:
+        result = db.execute(text("""
+            SELECT 
+                asunto,
+                TO_DATE(fecha, 'DD/MM/YYYY') as fecha,
+                afirmativos,
+                negativos,
+                ABS(afirmativos - negativos) as diferencia
+            FROM votaciones_hcdn
+            WHERE asunto IS NOT NULL 
+              AND asunto != ''
+              AND afirmativos > 0 
+              AND negativos > 0
+            ORDER BY diferencia ASC
+            LIMIT 1
+        """))
+        row = result.fetchone()
+        if row:
+            return {
+                'asunto': row[0],
+                'fecha': row[1],
+                'afirmativos': row[2],
+                'negativos': row[3],
+                'diferencia': row[4]
+            }
+        return None
+    finally:
+        db.close()
 
+# ============================================
+# FUNCIONES DE FORMATO
+# ============================================
 
-@st.cache_data(ttl=3600)
-def cargar_fecha_actualizacion():
-    """Última fecha de actualización de datos"""
-    db = SessionLocal()
-    
-    # Última votación
-    ultima_votacion = db.execute(text("""
-        SELECT MAX(fecha) FROM actas_cabecera
-    """)).scalar()
-    
-    # Última sesión
-    ultima_sesion = db.execute(text("""
-        SELECT MAX(fecha) FROM sesiones
-    """)).scalar()
-    
-    db.close()
-    
-    fechas = [f for f in [ultima_votacion, ultima_sesion] if f]
-    return max(fechas) if fechas else None
+def fmt_pesos(valor):
+    if pd.isna(valor) or valor is None:
+        return "-"
+    if valor >= 1_000_000_000:
+        return f"${valor/1_000_000_000:,.1f}B"
+    if valor >= 1_000_000:
+        return f"${valor/1_000_000:,.0f}M"
+    return f"${valor:,.0f}"
 
+# ============================================
+# RENDER
+# ============================================
 
 def render():
-    """Renderiza la página de inicio"""
-
-    st.title("Monitor Legislativo")
+    # Header
     st.markdown("""
-    <div class='page-subtitle'>
-        Seguimiento de la actividad del Congreso de la Nación Argentina ·
-        Votaciones, sesiones, comisiones y patrimonio de legisladores
+    <div style="margin-bottom: 1.5rem;">
+        <h1 style="margin-bottom: 0.3rem;">Inteligencia Publica</h1>
+        <p style="color: #6B7280; font-size: 1.1rem; margin: 0;">
+            Datos del Congreso argentino para periodistas e investigadores
+        </p>
     </div>
     """, unsafe_allow_html=True)
-
-    # Métricas principales
-    metricas = cargar_metricas_generales()
-
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Legisladores activos", f"{metricas['legisladores']:,}")
-    col2.metric("Votos registrados", f"{metricas['votos']:,}")
-    col3.metric("Sesiones 2024-25", metricas['sesiones'])
-    col4.metric("Declaraciones juradas", metricas['ddjj'])
-
-    st.markdown("<div style='height: 1rem'></div>", unsafe_allow_html=True)
-
-    # Dos columnas
-    col_izq, col_der = st.columns([3, 2])
-
-    with col_izq:
-        # Header con filtro
-        col_titulo, col_filtro = st.columns([2, 1])
-        with col_titulo:
-            st.markdown("## Actividad reciente")
-        with col_filtro:
-            tipo_filtro = st.selectbox(
-                "Tipo",
-                ["Todas", "Leyes", "DNUs", "Resoluciones"],
-                key="filtro_tipo_actividad",
-                label_visibility="collapsed"
-            )
-
-        df_votos = cargar_ultimas_votaciones(5, tipo=tipo_filtro)
-
-        if not df_votos.empty:
-            for idx, row in df_votos.iterrows():
-                titulo = row['titulo'][:80] + "..." if len(str(row['titulo'])) > 80 else row['titulo']
-                fecha = row['fecha']
-                afirm = int(row['votos_afirmativos'] or 0)
-                neg = int(row['votos_negativos'] or 0)
-                acta_id = row['acta_id']
-
-                if afirm > neg:
-                    badge_color = "#059669"
-                    badge_text = "Aprobado"
-                elif neg > afirm:
-                    badge_color = "#DC2626"
-                    badge_text = "Rechazado"
-                else:
-                    badge_color = "#6B7280"
-                    badge_text = "Empate"
-
-                # Card clickeable
-                if st.button(
-                    f"🗳️ {titulo[:60]}{'...' if len(str(titulo)) > 60 else ''}",
-                    key=f"votacion_{acta_id}",
-                    use_container_width=True,
-                    help=f"{fecha} · {afirm} ✓ · {neg} ✗ · {badge_text}"
-                ):
-                    st.session_state['votacion_seleccionada'] = acta_id
-                    st.session_state['menu_selection'] = 'Actividad'
-                    st.rerun()                
-                # Info adicional debajo del botón
-                st.markdown(f"""
-                <div style="margin-top: -0.5rem; margin-bottom: 1rem; padding-left: 1rem; font-size: 0.85rem; color: #6B7280;">
-                    {fecha} · {afirm} ✓ · {neg} ✗ 
-                    <span style="background: {badge_color}20; color: {badge_color}; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem;">{badge_text}</span>
-                </div>
-                """, unsafe_allow_html=True)
-        else:
-            st.info("No hay votaciones recientes con ese filtro.")
-
-        # Últimas sesiones
-        st.markdown("### Últimas sesiones")
-        df_sesiones = cargar_ultimas_sesiones(3)
-
-        if not df_sesiones.empty:
-            for _, row in df_sesiones.iterrows():
-                fecha = row['fecha']
-                tipo = row['tipo_periodo'] or "Ordinaria"
-                duracion = f"{float(row['duracion_horas']):.1f}h" if row['duracion_horas'] else "—"
-                quorum = row['hubo_quorum']
-
-                if quorum == 'Sí':
-                    quorum_color = "#059669"
-                    quorum_text = "Con quórum"
-                else:
-                    quorum_color = "#DC2626"
-                    quorum_text = "Sin quórum"
-
-                st.markdown(f"""
-                <div style="background: white; border: 1px solid #E5E7EB; border-radius: 8px; padding: 1rem; margin-bottom: 0.5rem;">
-                    <div style="display: flex; align-items: center; gap: 0.75rem;">
-                        <span style="font-size: 1.5rem;">📋</span>
-                        <div style="flex: 1;">
-                            <div style="font-weight: 600; color: #1F2937;">{tipo}</div>
-                            <div style="font-size: 0.85rem; color: #6B7280;">
-                                {fecha} · Duración: {duracion}
-                                <span style="background: {quorum_color}20; color: {quorum_color}; padding: 0.15rem 0.5rem; border-radius: 4px; margin-left: 0.5rem; font-size: 0.75rem;">{quorum_text}</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-        else:
-            st.info("No hay sesiones recientes cargadas.")
-
-    with col_der:
-        # Header con filtro de año
-        col_titulo2, col_filtro2 = st.columns([2, 1])
-        with col_titulo2:
-            st.markdown("## Votaciones ajustadas")
-        with col_filtro2:
-            anios = cargar_anios_disponibles()
-            anio_filtro = st.selectbox(
-                "Año",
-                ["Todos"] + anios,
-                key="filtro_anio_ajustadas",
-                label_visibility="collapsed"
-            )
-
-        st.caption("Menor diferencia entre afirmativos y negativos")
-
-        df_disputadas = cargar_votaciones_ajustadas(anio=anio_filtro, limit=5)
-
-        if not df_disputadas.empty:
-            for i, (_, row) in enumerate(df_disputadas.iterrows(), 1):
-                titulo = row['titulo'][:45] + "..." if len(str(row['titulo'])) > 45 else row['titulo']
-                afirm = int(row['votos_afirmativos'] or 0)
-                neg = int(row['votos_negativos'] or 0)
-                dif = int(row['diferencia'] or 0)
-                acta_id = row['acta_id']
-
-                # Botón clickeable
-                col_rank, col_btn = st.columns([0.15, 0.85])
-                with col_rank:
+    
+    # ========================================
+    # BUSCADOR DE LEGISLADORES
+    # ========================================
+    
+    st.markdown("### Buscar legislador")
+    
+    busqueda = st.text_input(
+        "Buscar",
+        placeholder="Escribi el nombre o apellido...",
+        key="busq_home",
+        label_visibility="collapsed"
+    )
+    
+    if busqueda and len(busqueda) >= 2:
+        resultados = buscar_legisladores(busqueda)
+        if not resultados.empty:
+            for _, row in resultados.iterrows():
+                col1, col2 = st.columns([4, 1])
+                with col1:
                     st.markdown(f"""
-                    <div style="font-size: 1.5rem; font-weight: 700; color: #D97706; text-align: center; padding-top: 0.5rem;">
-                        #{i}
+                    <div style="padding: 0.5rem 0; border-bottom: 1px solid #E5E7EB;">
+                        <span style="font-weight: 600;">{row['nombre']}</span>
+                        <span style="color: #6B7280; font-size: 0.9rem;"> · {row['camara']} · {row['bloque'] or 'Sin bloque'}</span>
                     </div>
                     """, unsafe_allow_html=True)
-                with col_btn:
-                    if st.button(
-                        f"{titulo}",
-                        key=f"ajustada_{acta_id}",
-                        use_container_width=True,
-                        help=f"{afirm} ✓ vs {neg} ✗ · Diferencia: {dif} votos"
-                    ):
-                        st.session_state['votacion_seleccionada'] = acta_id
-                        st.session_state['menu_selection'] = 'Actividad'
+                with col2:
+                    if st.button("Ver perfil", key=f"ver_{row['id']}"):
+                        st.session_state['legislador_seleccionado'] = row['id']
+                        st.session_state['menu_selection'] = 'Legisladores'
                         st.rerun()
-                    st.markdown(f"""
-                    <div style="margin-top: -0.8rem; margin-bottom: 0.5rem; font-size: 0.8rem; color: #6B7280;">
-                        {afirm} ✓ vs {neg} ✗ · <span style="color: #D97706; font-weight: 600;">Δ{dif}</span>
-                    </div>
-                    """, unsafe_allow_html=True)
         else:
-            st.info("No hay votaciones ajustadas con ese filtro.")
-
-        st.markdown("---")
-
-        st.markdown("### Secciones")
-
-        # Botones de navegación
-        if st.button("🔍 Buscar legislador", use_container_width=True, help="Perfil completo, votaciones, patrimonio"):
-            st.session_state['menu_selection'] = 'Legisladores'
-            st.rerun()
-
-        if st.button("📊 Ranking patrimonial", use_container_width=True, help="Evolución de declaraciones juradas"):
-            st.session_state['menu_selection'] = 'Patrimonio'
-            st.rerun()
-        if st.button("🗳️ Votaciones", use_container_width=True, help="Historial de votaciones nominales"):
-            st.session_state['menu_selection'] = 'Actividad'
-            st.rerun()
-
-        if st.button("📈 Estadísticas", use_container_width=True, help="Métricas y datos agregados"):
-            st.session_state['menu_selection'] = 'Estadisticas'
-            st.rerun()  
-
-    # Footer con fecha de actualización
-    fecha_actualizacion = cargar_fecha_actualizacion()
-    fecha_str = fecha_actualizacion.strftime("%d/%m/%Y") if fecha_actualizacion else "—"
+            st.caption("No se encontraron legisladores con ese nombre.")
     
     st.markdown("---")
-    st.markdown(f"""
-    <div style="text-align: center; padding: 2rem 0; color: #9CA3AF; font-size: 0.85rem;">
-        <strong>Lobby</strong> · Plataforma de Inteligencia Pública<br>
-        Datos: HCDN, Senado, Oficina Anticorrupción · Última actualización: {fecha_str}
+    
+    # ========================================
+    # DOS COLUMNAS: ALERTAS + VOTACIONES
+    # ========================================
+    
+    col_izq, col_der = st.columns([1, 1])
+    
+    # -------- COLUMNA IZQUIERDA: ALERTAS --------
+    with col_izq:
+        st.markdown("### Alertas patrimoniales")
+        st.caption("Crecimiento inusual entre 2022-2024")
+        
+        df_alertas = cargar_alertas_destacadas()
+        
+        if not df_alertas.empty:
+            for _, row in df_alertas.iterrows():
+                st.markdown(f"""
+                <div style="background: #FEF3C7; border-left: 4px solid #F59E0B; padding: 0.8rem; margin-bottom: 0.5rem; border-radius: 0 8px 8px 0;">
+                    <div style="font-weight: 600; color: #1F2937;">{row['nombre']}</div>
+                    <div style="font-size: 0.85rem; color: #6B7280;">{row['camara']}</div>
+                    <div style="margin-top: 0.4rem;">
+                        <span style="color: #059669; font-weight: 600;">x{row['multiplicador']:.1f}</span>
+                        <span style="color: #6B7280; font-size: 0.9rem;"> en 2 anios ({fmt_pesos(row['pat_2022'])} → {fmt_pesos(row['pat_2024'])})</span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            if st.button("Ver todas las alertas →", key="btn_alertas"):
+                st.session_state['menu_selection'] = 'Alertas'
+                st.rerun()
+        else:
+            st.info("No hay alertas para mostrar.")
+    
+    # -------- COLUMNA DERECHA: VOTACIONES --------
+    with col_der:
+        st.markdown("### Ultimas votaciones")
+        
+        df_votaciones = cargar_ultimas_votaciones(5)
+        
+        if not df_votaciones.empty:
+            for _, row in df_votaciones.iterrows():
+                fecha_str = row['fecha'].strftime('%d/%m') if pd.notna(row['fecha']) else '-'
+                asunto_corto = row['asunto'][:60] + '...' if len(str(row['asunto'])) > 60 else row['asunto']
+                
+                st.markdown(f"""
+                <div style="padding: 0.6rem 0; border-bottom: 1px solid #E5E7EB;">
+                    <div style="font-size: 0.9rem; color: #1F2937;">{asunto_corto}</div>
+                    <div style="font-size: 0.8rem; color: #6B7280; margin-top: 0.2rem;">
+                        {fecha_str} · 
+                        <span style="color: #059669;">{row['afirmativos'] or 0}✓</span> 
+                        <span style="color: #DC2626;">{row['negativos'] or 0}✗</span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            if st.button("Ver todas las votaciones →", key="btn_votaciones"):
+                st.session_state['menu_selection'] = 'Votaciones'
+                st.rerun()
+        else:
+            st.info("No hay votaciones recientes.")
+    
+    st.markdown("---")
+    
+    # ========================================
+    # VOTACION MAS AJUSTADA
+    # ========================================
+    
+    votacion_ajustada = cargar_votacion_mas_ajustada()
+    
+    if votacion_ajustada:
+        st.markdown("### La votacion mas renida")
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%); padding: 1.2rem; border-radius: 12px; border-left: 4px solid #F59E0B;">
+            <div style="font-weight: 600; font-size: 1rem; color: #1F2937; margin-bottom: 0.5rem;">
+                {votacion_ajustada['asunto'][:150]}{'...' if len(str(votacion_ajustada['asunto'])) > 150 else ''}
+            </div>
+            <div style="display: flex; gap: 1.5rem; align-items: center;">
+                <div>
+                    <span style="font-size: 1.5rem; font-weight: 700; color: #059669;">{votacion_ajustada['afirmativos']}</span>
+                    <span style="color: #6B7280;"> a favor</span>
+                </div>
+                <div style="font-size: 1.2rem; color: #6B7280;">vs</div>
+                <div>
+                    <span style="font-size: 1.5rem; font-weight: 700; color: #DC2626;">{votacion_ajustada['negativos']}</span>
+                    <span style="color: #6B7280;"> en contra</span>
+                </div>
+                <div style="background: white; padding: 0.4rem 0.8rem; border-radius: 8px;">
+                    <span style="font-weight: 700; color: #92400E;">Diferencia: {votacion_ajustada['diferencia']} votos</span>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # ========================================
+    # METRICAS Y FOOTER
+    # ========================================
+    
+    metricas = cargar_metricas()
+    
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Legisladores vigentes", f"{metricas['legisladores']:,}")
+    col2.metric("Votaciones HCDN", f"{metricas['votaciones']:,}")
+    col3.metric("Legisladores con DDJJ", f"{metricas['ddjj']:,}")
+    
+    st.markdown("""
+    <div style="text-align: center; color: #9CA3AF; font-size: 0.85rem; margin-top: 2rem;">
+        Datos de fuentes publicas: HCDN, Oficina Anticorrupcion, INDEC<br>
+        <a href="mailto:lobby.matufia@gmail.com" style="color: #6B7280;">lobby.matufia@gmail.com</a>
     </div>
     """, unsafe_allow_html=True)
