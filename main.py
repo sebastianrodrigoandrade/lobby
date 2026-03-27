@@ -13,7 +13,7 @@ st.set_page_config(
 
 from streamlit_option_menu import option_menu
 from src.styles import apply_styles
-from src.pages import home, legisladores, actividad, patrimonio, alertas, estadisticas
+from src.pages import home, legisladores, actividad, patrimonio, alertas, estadisticas, comisiones, comisiones
 
 # Aplicar estilos
 apply_styles()
@@ -35,7 +35,7 @@ st.markdown("""
 # NAVEGACIÓN
 # ============================================
 
-menu_options = ["Inicio", "Legisladores", "Votaciones", "Patrimonio", "Alertas", "Datos"]
+menu_options = ["Inicio", "Legisladores", "Votaciones", "Comisiones", "Patrimonio", "Alertas", "Datos"]
 
 if 'current_page' not in st.session_state:
     st.session_state['current_page'] = "Inicio"
@@ -52,7 +52,7 @@ except ValueError:
 selected = option_menu(
     menu_title=None,
     options=menu_options,
-    icons=["house", "person-badge", "check2-square", "cash-stack", "exclamation-triangle", "download"],
+    icons=["house", "person-badge", "check2-square", "people", "cash-stack", "exclamation-triangle", "download"],
     default_index=default_index,
     orientation="horizontal",
     key="main_menu"
@@ -72,6 +72,8 @@ elif selected == "Legisladores":
     legisladores.render()
 elif selected == "Votaciones":
     actividad.render()
+elif selected == "Comisiones":
+    comisiones.render()
 elif selected == "Patrimonio":
     patrimonio.render()
 elif selected == "Alertas":

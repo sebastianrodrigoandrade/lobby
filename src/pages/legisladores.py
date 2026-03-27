@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Lobby - Página de Legisladores
-Perfil completo: votaciones, patrimonio, proyectos y afinidades
+Perfil completo: votaciones, patrimonio, bienes, proyectos y afinidades
 """
 import streamlit as st
 import pandas as pd
@@ -20,7 +20,7 @@ ENCODING = {
 
 COLORES_BLOQUE = {
     'LA LIBERTAD AVANZA': '#7C3AED',
-    'PRO': '#FBBF24', 
+    'PRO': '#FBBF24',
     'UNION POR LA PATRIA': '#2563EB',
     'UNIÓN POR LA PATRIA': '#2563EB',
     'UCR': '#DC2626',
@@ -81,7 +81,7 @@ def cargar_legisladores(camara=None, solo_vigentes=True):
             SELECT l.id, l.nombre_completo, l.camara,
                    COALESCE(l.bloque, '—') as bloque,
                    COALESCE(l.distrito, '—') as distrito,
-                   l.mandato_hasta,
+                   l.mandato_hasta, l.foto_url,
                    COALESCE((SELECT COUNT(*) FROM votos_hcdn vh WHERE vh.legislador_id = l.id), 0) +
                    COALESCE((SELECT COUNT(*) FROM votos v WHERE v.legislador_id = l.id), 0) as total_votos
             FROM legisladores l
@@ -100,7 +100,7 @@ def cargar_legislador_por_id(legislador_id):
             SELECT l.id, l.nombre_completo, l.camara,
                    COALESCE(l.bloque, '—') as bloque,
                    COALESCE(l.distrito, '—') as distrito,
-                   l.mandato_hasta,
+                   l.mandato_hasta, l.foto_url,
                    COALESCE((SELECT COUNT(*) FROM votos_hcdn vh WHERE vh.legislador_id = l.id), 0) +
                    COALESCE((SELECT COUNT(*) FROM votos v WHERE v.legislador_id = l.id), 0) as total_votos
             FROM legisladores l
@@ -170,11 +170,47 @@ def cargar_ddjj_legislador(legislador_id):
         db.close()
 
 @st.cache_data(ttl=3600)
-def cargar_mediana_y_ranking(legislador_id, anio=2024):
-    """Obtiene la mediana general y el ranking del legislador."""
+def cargar_bienes_legislador(legislador_id):
+    """Carga bienes detallados del legislador."""
     db = SessionLocal()
     try:
-        # Mediana general
+        result = db.execute(text("""
+            SELECT bien_tipo, bien_descripcion, bien_importe
+            FROM ddjj_bienes
+            WHERE legislador_id = :id
+            ORDER BY bien_importe DESC NULLS LAST
+        """), {"id": legislador_id})
+        return pd.DataFrame(result.fetchall(), columns=['tipo', 'descripcion', 'importe'])
+    finally:
+        db.close()
+
+@st.cache_data(ttl=3600)
+def cargar_comisiones_legislador(legislador_id):
+    """Carga comisiones a las que pertenece el legislador."""
+    db = SessionLocal()
+    try:
+        result = db.execute(text("""
+            SELECT c.nombre, ci.cargo
+            FROM comision_integrantes ci
+            JOIN comisiones c ON c.id = ci.comision_id
+            WHERE ci.legislador_id = :id
+            ORDER BY 
+                CASE ci.cargo 
+                    WHEN 'PRESIDENTE' THEN 1 
+                    WHEN 'VICEPRESIDENTE 1ª' THEN 2
+                    WHEN 'VICEPRESIDENTE 2ª' THEN 3
+                    WHEN 'SECRETARIO' THEN 4
+                    ELSE 5 
+                END
+        """), {"id": legislador_id})
+        return pd.DataFrame(result.fetchall(), columns=['comision', 'cargo'])
+    finally:
+        db.close()
+
+@st.cache_data(ttl=3600)
+def cargar_mediana_y_ranking(legislador_id, anio=2024):
+    db = SessionLocal()
+    try:
         result = db.execute(text("""
             SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY patrimonio_neto) as mediana
             FROM ddjj_legisladores
@@ -182,7 +218,6 @@ def cargar_mediana_y_ranking(legislador_id, anio=2024):
         """), {"anio": anio})
         mediana = float(result.scalar() or 0)
         
-        # Ranking del legislador
         result = db.execute(text("""
             WITH ranked AS (
                 SELECT legislador_id, patrimonio_neto,
@@ -203,7 +238,6 @@ def cargar_mediana_y_ranking(legislador_id, anio=2024):
 
 @st.cache_data(ttl=3600)
 def cargar_variacion_patrimonial(legislador_id):
-    """Calcula variación patrimonial con ajuste por inflación."""
     db = SessionLocal()
     try:
         result = db.execute(text("""
@@ -302,22 +336,16 @@ def calcular_divergencia(legislador_id, limit=5):
 def render():
     st.markdown("<div style='height: 1.5rem'></div>", unsafe_allow_html=True)
     st.title("Legisladores")
-    st.markdown("<div class='page-subtitle'>Perfil completo: votaciones, patrimonio, proyectos y afinidades</div>", unsafe_allow_html=True)
+    st.markdown("<div class='page-subtitle'>Perfil completo: votaciones, patrimonio, bienes, proyectos y afinidades</div>", unsafe_allow_html=True)
 
-    # ========================================
-    # VERIFICAR SI VIENE DE HOME CON SELECCIÓN
-    # ========================================
-    
+    # Verificar si viene de home con selección
     legislador_preseleccionado = None
     if 'legislador_seleccionado' in st.session_state:
         leg_id = st.session_state['legislador_seleccionado']
         legislador_preseleccionado = cargar_legislador_por_id(leg_id)
         del st.session_state['legislador_seleccionado']
 
-    # ========================================
-    # BUSCADOR
-    # ========================================
-
+    # Buscador
     busqueda = st.text_input(
         "Buscar legislador",
         placeholder="Escribi nombre o apellido...",
@@ -330,7 +358,6 @@ def render():
     with col_f2:
         vigentes = st.checkbox("Solo mandatos vigentes", value=True, key="filtro_vigentes")
 
-    # Cargar datos
     df_legisladores = cargar_legisladores(camara=camara, solo_vigentes=vigentes)
 
     if busqueda:
@@ -352,13 +379,9 @@ def render():
 
     st.markdown("---")
 
-    # ========================================
-    # SELECTOR
-    # ========================================
-
+    # Selector
     nombres = df_filtrado['nombre_completo'].tolist()
     
-    # Si viene preseleccionado, buscar índice
     default_index = 0
     if legislador_preseleccionado:
         nombre_pre = legislador_preseleccionado['nombre_completo']
@@ -382,33 +405,193 @@ def render():
     row = df_filtrado[df_filtrado['nombre_completo'] == seleccionado].iloc[0]
     leg_id = int(row['id'])
     color_bloque = get_color_bloque(row['bloque'])
+    foto_url = row['foto_url'] if pd.notna(row.get('foto_url')) else None
 
-    # Header del perfil
+    # Header del perfil con foto
+    if foto_url:
+        foto_html = f'<img src="{foto_url}" style="width: 100px; height: 100px; border-radius: 50%; object-fit: cover; border: 4px solid {color_bloque};">'
+    else:
+        foto_html = f'<div style="width: 100px; height: 100px; border-radius: 50%; background: {color_bloque}20; display: flex; align-items: center; justify-content: center; color: {color_bloque}; font-weight: 700; font-size: 2.5rem; border: 4px solid {color_bloque};">{seleccionado[0]}</div>'
+
     st.markdown(f"""
     <div style="background: linear-gradient(135deg, {color_bloque}15, {color_bloque}05);
                 border-left: 4px solid {color_bloque};
                 padding: 1.5rem; border-radius: 0 12px 12px 0; margin: 1rem 0;">
-        <h2 style="margin: 0 0 0.5rem 0; color: #1F2937;">{seleccionado}</h2>
-        <div style="display: flex; gap: 2rem; flex-wrap: wrap;">
-            <div><span style="color: #6B7280;">Bloque:</span> <strong style="color: {color_bloque};">{row['bloque']}</strong></div>
-            <div><span style="color: #6B7280;">Distrito:</span> <strong>{row['distrito']}</strong></div>
-            <div><span style="color: #6B7280;">Camara:</span> <strong>{row['camara']}</strong></div>
-            <div><span style="color: #6B7280;">Votos:</span> <strong>{int(row['total_votos']):,}</strong></div>
+        <div style="display: flex; gap: 1.5rem; align-items: center; flex-wrap: wrap;">
+            {foto_html}
+            <div>
+                <h2 style="margin: 0 0 0.5rem 0; color: #1F2937;">{seleccionado}</h2>
+                <div style="display: flex; gap: 1.5rem; flex-wrap: wrap;">
+                    <div><span style="color: #6B7280;">Bloque:</span> <strong style="color: {color_bloque};">{row['bloque']}</strong></div>
+                    <div><span style="color: #6B7280;">Distrito:</span> <strong>{row['distrito']}</strong></div>
+                    <div><span style="color: #6B7280;">Camara:</span> <strong>{row['camara']}</strong></div>
+                    <div><span style="color: #6B7280;">Votos:</span> <strong>{int(row['total_votos']):,}</strong></div>
+                </div>
+            </div>
         </div>
     </div>
     """, unsafe_allow_html=True)
     
+    # Comisiones del legislador
+    df_comisiones = cargar_comisiones_legislador(leg_id)
+    if not df_comisiones.empty:
+        comisiones_str = " · ".join([
+            f"<strong>{r['cargo']}</strong> {r['comision']}" if r['cargo'] != 'VOCAL' else r['comision']
+            for _, r in df_comisiones.iterrows()
+        ])
+        st.markdown(f"""
+        <div style="background: #F3F4F6; padding: 0.8rem 1rem; border-radius: 8px; margin-bottom: 1rem; font-size: 0.9rem;">
+            <span style="color: #6B7280;">Comisiones:</span> {comisiones_str}
+        </div>
+        """, unsafe_allow_html=True)
+    
     # Botón compartir
-    tweet = f"{seleccionado} ({row['bloque']}, {row['camara']}). Mira su perfil completo en Lobby: votaciones, patrimonio y mas."
+    tweet = f"{seleccionado} ({row['bloque']}, {row['camara']}). Mira su perfil completo en Lobby."
     st.link_button("Compartir en X", generar_tweet(tweet), use_container_width=False)
 
     # Tabs
-    tabs = st.tabs(["Votaciones", "Patrimonio", "Proyectos", "Afinidades"])
+    tabs = st.tabs(["Patrimonio", "Bienes", "Votaciones", "Proyectos", "Afinidades"])
+
+    # ========================================
+    # TAB PATRIMONIO
+    # ========================================
+    with tabs[0]:
+        df_ddjj = cargar_ddjj_legislador(leg_id)
+
+        if df_ddjj.empty:
+            st.info("No hay declaraciones juradas cargadas para este legislador.")
+        else:
+            variacion = cargar_variacion_patrimonial(leg_id)
+            ranking = cargar_mediana_y_ranking(leg_id, 2024)
+            
+            ultimo_pat = float(df_ddjj.iloc[0]['patrimonio_neto'])
+            veces_mediana = ultimo_pat / ranking['mediana'] if ranking['mediana'] > 0 else 0
+            
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Patrimonio 2024", fmt_pesos(ultimo_pat))
+            col2.metric("vs Mediana", f"{veces_mediana:.1f}x")
+            if ranking['rank']:
+                col3.metric("Ranking", f"#{ranking['rank']} de {ranking['total']}")
+            
+            if variacion:
+                st.markdown("---")
+                st.markdown("**Variacion 2022-2024** (inflacion: 493%)")
+                
+                col1, col2, col3 = st.columns(3)
+                col1.metric("2022", fmt_pesos(variacion['pat_2022']))
+                col2.metric("2024", fmt_pesos(variacion['pat_2024']))
+                
+                if variacion['var_real'] is not None:
+                    color_var = "#059669" if variacion['var_real'] > 0 else "#DC2626"
+                    col3.markdown(f"""
+                    <div style="background: {color_var}10; padding: 0.8rem; border-radius: 8px; text-align: center;">
+                        <div style="font-size: 0.8rem; color: #6B7280;">Variacion real</div>
+                        <div style="font-size: 1.5rem; font-weight: 700; color: {color_var};">{variacion['var_real']:+.1f}%</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+            
+            st.markdown("---")
+            st.markdown("**Detalle por anio**")
+            for _, r in df_ddjj.iterrows():
+                patrimonio = float(r['patrimonio_neto'] or 0)
+                bienes = float(r['total_bienes'] or 0)
+                deudas = float(r['total_deudas'] or 0)
+                proveedor = r['proveedor_contratista']
+
+                st.markdown(f"""
+                <div style="background: white; border: 1px solid #E5E7EB; border-radius: 12px; padding: 1rem; margin-bottom: 0.8rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                        <span style="font-weight: 700; font-size: 1.1rem; color: #2563EB;">DDJJ {int(r['anio'])}</span>
+                        {"<span style='background: #FEF3C7; color: #92400E; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.8rem;'>Proveedor del Estado</span>" if proveedor == 'SI' else ""}
+                    </div>
+                    <div style="display: flex; gap: 2rem; flex-wrap: wrap;">
+                        <div>
+                            <span style="font-size: 0.75rem; color: #6B7280;">PATRIMONIO</span><br>
+                            <span style="font-size: 1.1rem; font-weight: 700;">{fmt_pesos(patrimonio)}</span>
+                        </div>
+                        <div>
+                            <span style="font-size: 0.75rem; color: #6B7280;">BIENES</span><br>
+                            <span style="font-weight: 600;">{fmt_pesos(bienes)}</span>
+                        </div>
+                        <div>
+                            <span style="font-size: 0.75rem; color: #6B7280;">DEUDAS</span><br>
+                            <span style="font-weight: 600; color: #DC2626;">{fmt_pesos(deudas)}</span>
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+    # ========================================
+    # TAB BIENES
+    # ========================================
+    with tabs[1]:
+        df_bienes = cargar_bienes_legislador(leg_id)
+        
+        if df_bienes.empty:
+            st.info("No hay detalle de bienes cargado para este legislador.")
+        else:
+            st.markdown(f"**{len(df_bienes)} bienes declarados**")
+            
+            # Resumen por tipo
+            resumen = df_bienes.groupby('tipo').agg({
+                'importe': ['count', 'sum']
+            }).reset_index()
+            resumen.columns = ['tipo', 'cantidad', 'total']
+            resumen = resumen.sort_values('total', ascending=False)
+            
+            # Participaciones en empresas
+            empresas = df_bienes[df_bienes['tipo'].str.contains('PARTICIPACIONES|ACCIONES.*SIN COTIZACION', case=False, na=False, regex=True)]
+            if not empresas.empty:
+                st.markdown("### Participaciones en empresas")
+                for _, b in empresas.iterrows():
+                    st.markdown(f"""
+                    <div style="border-left: 4px solid #7C3AED; padding: 0.6rem 1rem; margin-bottom: 0.5rem; background: #F5F3FF; border-radius: 0 8px 8px 0;">
+                        <div style="font-weight: 600;">{b['descripcion'][:100]}{'...' if len(str(b['descripcion'])) > 100 else ''}</div>
+                        <div style="color: #6B7280; font-size: 0.9rem;">{fmt_pesos(b['importe'])}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+            
+            # Inmuebles
+            inmuebles = df_bienes[df_bienes['tipo'].str.contains('INMUEBLES', case=False, na=False)]
+            if not inmuebles.empty:
+                st.markdown("### Inmuebles")
+                for _, b in inmuebles.head(10).iterrows():
+                    st.markdown(f"""
+                    <div style="border-left: 4px solid #059669; padding: 0.6rem 1rem; margin-bottom: 0.5rem; background: #ECFDF5; border-radius: 0 8px 8px 0;">
+                        <div style="font-size: 0.9rem;">{b['descripcion'][:120]}{'...' if len(str(b['descripcion'])) > 120 else ''}</div>
+                        <div style="color: #059669; font-weight: 600;">{fmt_pesos(b['importe'])}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                if len(inmuebles) > 10:
+                    st.caption(f"... y {len(inmuebles) - 10} inmuebles más")
+            
+            # Vehículos
+            vehiculos = df_bienes[df_bienes['tipo'].str.contains('AUTOMOTORES|VEHICULOS', case=False, na=False, regex=True)]
+            if not vehiculos.empty:
+                st.markdown("### Vehiculos")
+                for _, b in vehiculos.iterrows():
+                    st.markdown(f"""
+                    <div style="padding: 0.4rem 0; border-bottom: 1px solid #E5E7EB;">
+                        <span>{b['descripcion'][:80]}{'...' if len(str(b['descripcion'])) > 80 else ''}</span>
+                        <span style="float: right; color: #6B7280;">{fmt_pesos(b['importe'])}</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+            
+            # Resumen general
+            st.markdown("---")
+            st.markdown("### Resumen por tipo de bien")
+            for _, r in resumen.iterrows():
+                st.markdown(f"""
+                <div style="display: flex; justify-content: space-between; padding: 0.4rem 0; border-bottom: 1px solid #F3F4F6;">
+                    <span style="font-size: 0.9rem;">{r['tipo']}</span>
+                    <span><strong>{int(r['cantidad'])}</strong> ({fmt_pesos(r['total'])})</span>
+                </div>
+                """, unsafe_allow_html=True)
 
     # ========================================
     # TAB VOTACIONES
     # ========================================
-    with tabs[0]:
+    with tabs[2]:
         df_votos = cargar_votos_legislador(leg_id)
 
         if df_votos.empty:
@@ -465,95 +648,9 @@ def render():
                 )
 
     # ========================================
-    # TAB PATRIMONIO
-    # ========================================
-    with tabs[1]:
-        df_ddjj = cargar_ddjj_legislador(leg_id)
-
-        if df_ddjj.empty:
-            st.info("No hay declaraciones juradas cargadas para este legislador.")
-        else:
-            # Variación y ranking
-            variacion = cargar_variacion_patrimonial(leg_id)
-            ranking = cargar_mediana_y_ranking(leg_id, 2024)
-            
-            # Resumen destacado
-            ultimo_pat = float(df_ddjj.iloc[0]['patrimonio_neto'])
-            veces_mediana = ultimo_pat / ranking['mediana'] if ranking['mediana'] > 0 else 0
-            
-            col1, col2, col3 = st.columns(3)
-            col1.metric(
-                "Patrimonio 2024", 
-                fmt_pesos(ultimo_pat),
-                help="Ultimo patrimonio declarado"
-            )
-            col2.metric(
-                "vs Mediana",
-                f"{veces_mediana:.1f}x",
-                help=f"La mediana de legisladores es {fmt_pesos(ranking['mediana'])}"
-            )
-            if ranking['rank']:
-                col3.metric(
-                    "Ranking",
-                    f"#{ranking['rank']} de {ranking['total']}",
-                    help="Posicion entre todos los legisladores con DDJJ"
-                )
-            
-            # Variación real si hay datos
-            if variacion:
-                st.markdown("---")
-                st.markdown("**Variacion 2022-2024** (inflacion acumulada: 493%)")
-                
-                col1, col2, col3 = st.columns(3)
-                col1.metric("Patrimonio 2022", fmt_pesos(variacion['pat_2022']))
-                col2.metric("Patrimonio 2024", fmt_pesos(variacion['pat_2024']))
-                
-                if variacion['var_real'] is not None:
-                    color_var = "#059669" if variacion['var_real'] > 0 else "#DC2626"
-                    col3.markdown(f"""
-                    <div style="background: {color_var}10; padding: 0.8rem; border-radius: 8px; text-align: center;">
-                        <div style="font-size: 0.8rem; color: #6B7280;">Variacion real</div>
-                        <div style="font-size: 1.5rem; font-weight: 700; color: {color_var};">{variacion['var_real']:+.1f}%</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-            
-            st.markdown("---")
-            
-            # Detalle por año
-            st.markdown("**Detalle por anio**")
-            for _, r in df_ddjj.iterrows():
-                patrimonio = float(r['patrimonio_neto'] or 0)
-                bienes = float(r['total_bienes'] or 0)
-                deudas = float(r['total_deudas'] or 0)
-                proveedor = r['proveedor_contratista']
-
-                st.markdown(f"""
-                <div style="background: white; border: 1px solid #E5E7EB; border-radius: 12px; padding: 1rem; margin-bottom: 0.8rem;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-                        <span style="font-weight: 700; font-size: 1.1rem; color: #2563EB;">DDJJ {int(r['anio'])}</span>
-                        {"<span style='background: #FEF3C7; color: #92400E; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.8rem;'>Proveedor del Estado</span>" if proveedor == 'SI' else ""}
-                    </div>
-                    <div style="display: flex; gap: 2rem; flex-wrap: wrap;">
-                        <div>
-                            <span style="font-size: 0.75rem; color: #6B7280;">PATRIMONIO</span><br>
-                            <span style="font-size: 1.1rem; font-weight: 700;">{fmt_pesos(patrimonio)}</span>
-                        </div>
-                        <div>
-                            <span style="font-size: 0.75rem; color: #6B7280;">BIENES</span><br>
-                            <span style="font-weight: 600;">{fmt_pesos(bienes)}</span>
-                        </div>
-                        <div>
-                            <span style="font-size: 0.75rem; color: #6B7280;">DEUDAS</span><br>
-                            <span style="font-weight: 600; color: #DC2626;">{fmt_pesos(deudas)}</span>
-                        </div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-    # ========================================
     # TAB PROYECTOS
     # ========================================
-    with tabs[2]:
+    with tabs[3]:
         df_proyectos = cargar_proyectos_legislador(seleccionado)
 
         if df_proyectos.empty:
@@ -572,7 +669,7 @@ def render():
     # ========================================
     # TAB AFINIDADES
     # ========================================
-    with tabs[3]:
+    with tabs[4]:
         st.markdown("""
         <div style="background: #F0F9FF; border: 1px solid #BAE6FD; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
             <strong>Como se calcula?</strong>
@@ -591,7 +688,7 @@ def render():
             if df_afin.empty:
                 st.info("Sin datos suficientes.")
             else:
-                for i, (_, r) in enumerate(df_afin.iterrows(), 1):
+                for _, r in df_afin.iterrows():
                     color = get_color_bloque(r['bloque'])
                     st.markdown(f"""
                     <div style="background: white; border-left: 4px solid #059669; padding: 0.6rem 1rem;
@@ -612,7 +709,7 @@ def render():
             if df_div.empty:
                 st.info("Sin datos suficientes.")
             else:
-                for i, (_, r) in enumerate(df_div.iterrows(), 1):
+                for _, r in df_div.iterrows():
                     color = get_color_bloque(r['bloque'])
                     st.markdown(f"""
                     <div style="background: white; border-left: 4px solid #DC2626; padding: 0.6rem 1rem;

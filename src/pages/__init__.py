@@ -1,2 +1,1 @@
-# Módulos de páginas
-from . import home, legisladores, actividad, patrimonio, estadisticas, alertas
+from . import home, legisladores, actividad, patrimonio, alertas, estadisticas, comisiones
