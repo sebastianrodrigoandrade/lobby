@@ -491,7 +491,7 @@ def render():
                     """, unsafe_allow_html=True)
             
             st.markdown("---")
-            st.markdown("**Detalle por anio**")
+            st.markdown("**Detalle por año**")
             for _, r in df_ddjj.iterrows():
                 patrimonio = float(r['patrimonio_neto'] or 0)
                 bienes = float(r['total_bienes'] or 0)
