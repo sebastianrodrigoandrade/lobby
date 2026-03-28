@@ -450,7 +450,7 @@ def render():
     st.link_button("Compartir en X", generar_tweet(tweet), use_container_width=False)
 
     # Tabs
-    tabs = st.tabs(["Patrimonio", "Bienes", "Votaciones", "Proyectos", "Afinidades"])
+    tabs = st.tabs(["Patrimonio", "Bienes", "Deudas", "Familia", "Votaciones", "Proyectos", "Afinidades"])
 
     # ========================================
     # TAB PATRIMONIO
@@ -589,9 +589,104 @@ def render():
                 """, unsafe_allow_html=True)
 
     # ========================================
-    # TAB VOTACIONES
+    # ========================================
+    # TAB DEUDAS
     # ========================================
     with tabs[2]:
+        df_deudas = cargar_deudas_legislador(leg_id)
+        
+        if df_deudas.empty:
+            st.info("No hay deudas registradas para este legislador.")
+        else:
+            total_deuda = df_deudas['importe'].sum()
+            st.markdown(f"**Total adeudado: {fmt_pesos(total_deuda)}**")
+            
+            # Resumen por tipo
+            col1, col2, col3 = st.columns(3)
+            tipos = df_deudas.groupby('tipo')['importe'].sum()
+            col1.metric("Comun", fmt_pesos(tipos.get('COMUN', 0)))
+            col2.metric("Hipotecario", fmt_pesos(tipos.get('HIPOTECARIO', 0)))
+            col3.metric("Prendario", fmt_pesos(tipos.get('PRENDARIO', 0)))
+            
+            st.markdown("---")
+            st.markdown("### Detalle de deudas")
+            
+            for _, d in df_deudas.iterrows():
+                # Extraer acreedor
+                desc = d['descripcion'] or ''
+                acreedor = desc.split(' -CUIT')[0] if ' -CUIT' in desc else desc[:60]
+                
+                color = '#DC2626' if d['tipo'] == 'HIPOTECARIO' else '#F59E0B'
+                st.markdown(f"""
+                <div style="border-left: 4px solid {color}; padding: 0.6rem 1rem; margin-bottom: 0.5rem; background: {color}10; border-radius: 0 8px 8px 0;">
+                    <div style="display: flex; justify-content: space-between;">
+                        <span style="font-weight: 600;">{acreedor}</span>
+                        <span style="font-weight: 700; color: {color};">{fmt_pesos(d['importe'])}</span>
+                    </div>
+                    <div style="font-size: 0.8rem; color: #6B7280;">{d['tipo']} - {d['clasificacion'] or ''}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+    # ========================================
+    # TAB FAMILIA
+    # ========================================
+    with tabs[3]:
+        df_familia = cargar_familia_legislador(leg_id)
+        
+        if df_familia.empty:
+            st.info("No hay grupo familiar declarado.")
+        else:
+            st.markdown(f"**{len(df_familia)} familiares declarados**")
+            
+            # Separar por parentesco
+            conyuges = df_familia[df_familia['parentesco'].str.contains('CONYUGE|CONVIVIENTE', case=False, na=False)]
+            hijos = df_familia[df_familia['parentesco'].str.contains('HIJO', case=False, na=False)]
+            
+            if not conyuges.empty:
+                st.markdown("### Conyuge / Conviviente")
+                for _, f in conyuges.iterrows():
+                    # Verificar si tiene cargo publico
+                    cargo_pub = verificar_familiar_funcionario(f['cuit']) if f['cuit'] else None
+                    
+                    st.markdown(f"""
+                    <div style="background: white; border: 1px solid #E5E7EB; border-radius: 12px; padding: 1rem; margin-bottom: 0.5rem;">
+                        <div style="font-weight: 600; font-size: 1.1rem;">{f['nombre']}</div>
+                        <div style="color: #6B7280; font-size: 0.9rem;">
+                            {f['genero'] or ''} 
+                            {' - Nac: ' + str(f['fecha_nacimiento'])[:10] if pd.notna(f['fecha_nacimiento']) else ''}
+                        </div>
+                        {"<div style='background: #FEF3C7; color: #92400E; padding: 0.3rem 0.6rem; border-radius: 4px; margin-top: 0.5rem; font-size: 0.85rem;'><strong>Cargo publico:</strong> " + cargo_pub['cargo'] + " - " + cargo_pub['organismo'][:50] + "</div>" if cargo_pub else ""}
+                    </div>
+                    """, unsafe_allow_html=True)
+            
+            if not hijos.empty:
+                st.markdown("### Hijos/as")
+                cols = st.columns(min(len(hijos), 3))
+                for i, (_, f) in enumerate(hijos.iterrows()):
+                    with cols[i % 3]:
+                        # Calcular edad
+                        edad = ""
+                        if pd.notna(f['fecha_nacimiento']):
+                            from datetime import date
+                            try:
+                                nac = pd.to_datetime(f['fecha_nacimiento']).date()
+                                edad = f" ({(date.today() - nac).days // 365} años)"
+                            except:
+                                pass
+                        
+                        cargo_pub = verificar_familiar_funcionario(f['cuit']) if f['cuit'] else None
+                        
+                        st.markdown(f"""
+                        <div style="background: #F9FAFB; border-radius: 8px; padding: 0.8rem; margin-bottom: 0.5rem;">
+                            <div style="font-weight: 600;">{f['nombre']}</div>
+                            <div style="color: #6B7280; font-size: 0.85rem;">{f['genero'] or ''}{edad}</div>
+                            {"<div style='color: #DC2626; font-size: 0.8rem; margin-top: 0.3rem;'>Funcionario publico</div>" if cargo_pub else ""}
+                        </div>
+                        """, unsafe_allow_html=True)
+
+    # TAB VOTACIONES
+    # ========================================
+    with tabs[4]:
         df_votos = cargar_votos_legislador(leg_id)
 
         if df_votos.empty:
@@ -650,7 +745,7 @@ def render():
     # ========================================
     # TAB PROYECTOS
     # ========================================
-    with tabs[3]:
+    with tabs[5]:
         df_proyectos = cargar_proyectos_legislador(seleccionado)
 
         if df_proyectos.empty:
@@ -669,7 +764,7 @@ def render():
     # ========================================
     # TAB AFINIDADES
     # ========================================
-    with tabs[4]:
+    with tabs[6]:
         st.markdown("""
         <div style="background: #F0F9FF; border: 1px solid #BAE6FD; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
             <strong>Como se calcula?</strong>
@@ -723,3 +818,52 @@ def render():
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
+
+@st.cache_data(ttl=3600)
+def cargar_deudas_legislador(legislador_id):
+    """Carga deudas del legislador."""
+    db = SessionLocal()
+    try:
+        result = db.execute(text("""
+            SELECT deuda_tipo, deuda_descripcion, deuda_clasificacion, deuda_importe
+            FROM ddjj_deudas
+            WHERE legislador_id = :id
+            ORDER BY deuda_importe DESC NULLS LAST
+        """), {"id": legislador_id})
+        return pd.DataFrame(result.fetchall(), columns=['tipo', 'descripcion', 'clasificacion', 'importe'])
+    finally:
+        db.close()
+
+@st.cache_data(ttl=3600)
+def cargar_familia_legislador(legislador_id):
+    """Carga grupo familiar del legislador."""
+    db = SessionLocal()
+    try:
+        result = db.execute(text("""
+            SELECT familiar_apellido_nombre, familiar_parentesco, familiar_genero, 
+                   familiar_fecha_nacimiento, familiar_cuit
+            FROM ddjj_grupo_familiar
+            WHERE legislador_id = :id
+            ORDER BY familiar_parentesco, familiar_apellido_nombre
+        """), {"id": legislador_id})
+        return pd.DataFrame(result.fetchall(), columns=['nombre', 'parentesco', 'genero', 'fecha_nacimiento', 'cuit'])
+    finally:
+        db.close()
+
+@st.cache_data(ttl=3600)
+def verificar_familiar_funcionario(cuit_familiar):
+    """Verifica si un familiar tiene cargo publico."""
+    db = SessionLocal()
+    try:
+        result = db.execute(text("""
+            SELECT funcionario_apellido_nombre, cargo, organismo
+            FROM ddjj_legisladores
+            WHERE cuit = :cuit
+            LIMIT 1
+        """), {"cuit": cuit_familiar})
+        row = result.fetchone()
+        if row:
+            return {'nombre': row[0], 'cargo': row[1], 'organismo': row[2]}
+        return None
+    finally:
+        db.close()
