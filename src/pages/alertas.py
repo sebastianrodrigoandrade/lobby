@@ -263,11 +263,15 @@ def render():
     mediana = cargar_mediana_general()
     
     # Tabs para cada tipo de alerta
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "Crecimiento inusual", 
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+        "Crecimiento inusual",
         "Caida patrimonial",
         "Nuevos con alto patrimonio",
-        "Perdieron vs inflacion"
+        "Perdieron vs inflacion",
+        "Empresas",
+        "Proveedores Estado",
+        "Ex funcionarios",
+        "Mas endeudados"
     ])
     
     # ========================================
@@ -520,6 +524,193 @@ def render():
         else:
             st.success("Todos los legisladores superaron la inflacion.")
     
+
+    # ========================================
+    # TAB 5: EMPRESAS
+    # ========================================
+    with tab5:
+        st.markdown("### Legisladores con participaciones en empresas")
+        st.caption("Participaciones societarias sin cotizacion declaradas en DDJJ")
+        
+        df = detectar_participaciones_empresas(min_empresas=1, min_valor=50000000)
+        
+        if not df.empty:
+            top = df.iloc[0]
+            st.markdown(f"""
+            <div style="background: linear-gradient(135deg, #F5F3FF 0%, #EDE9FE 100%); padding: 1.2rem; border-radius: 12px; margin-bottom: 1rem; border-left: 4px solid #7C3AED;">
+                <div style="font-size: 1.1rem; font-weight: 600; color: #5B21B6; margin-bottom: 0.5rem;">HALLAZGO</div>
+                <div style="font-size: 1rem; color: #1F2937;">
+                    <strong>{len(df)} legisladores vigentes</strong> tienen participaciones en empresas declaradas.
+                    El caso con mayor valor es <strong>{top['nombre']}</strong> con <strong>{fmt_pesos(top['valor_total'])}</strong>
+                    en {int(top['num_empresas'])} empresa(s).
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.download_button(
+                "Descargar datos (CSV)",
+                df.to_csv(index=False).encode('utf-8'),
+                "alertas_empresas.csv",
+                "text/csv",
+                use_container_width=True
+            )
+            
+            st.markdown("---")
+            for _, row in df.iterrows():
+                st.markdown(f"""
+                <div style="background: white; border-left: 4px solid #7C3AED; padding: 0.8rem 1rem; margin-bottom: 0.4rem; border-radius: 0 8px 8px 0;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <span style="font-weight: 600;">{row['nombre']}</span>
+                            <span style="color: #6B7280; font-size: 0.85rem;"> - {row['bloque']}</span>
+                        </div>
+                        <div>
+                            <span style="color: #7C3AED; font-weight: 600;">{int(row['num_empresas'])} empresas</span>
+                            <span style="color: #6B7280;"> | </span>
+                            <span style="font-weight: 600;">{fmt_pesos(row['valor_total'])}</span>
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.info("No se encontraron legisladores con participaciones significativas.")
+
+    # ========================================
+    # TAB 6: PROVEEDORES DEL ESTADO
+    # ========================================
+    with tab6:
+        st.markdown("### Legisladores proveedores del Estado")
+        st.caption("Legisladores que declararon ser proveedores o contratistas del Estado")
+        
+        df = detectar_proveedores_estado()
+        
+        if not df.empty:
+            st.markdown(f"""
+            <div style="background: linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%); padding: 1.2rem; border-radius: 12px; margin-bottom: 1rem; border-left: 4px solid #F59E0B;">
+                <div style="font-size: 1.1rem; font-weight: 600; color: #92400E; margin-bottom: 0.5rem;">ALERTA</div>
+                <div style="font-size: 1rem; color: #1F2937;">
+                    <strong>{len(df)} legisladores vigentes</strong> declararon ser proveedores o contratistas del Estado
+                    en sus declaraciones juradas.
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            for _, row in df.iterrows():
+                st.markdown(f"""
+                <div style="background: #FFFBEB; border-left: 4px solid #F59E0B; padding: 0.8rem 1rem; margin-bottom: 0.4rem; border-radius: 0 8px 8px 0;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <span style="font-weight: 600;">{row['nombre']}</span>
+                            <span style="color: #6B7280; font-size: 0.85rem;"> - {row['bloque']} ({row['camara']})</span>
+                        </div>
+                        <div>
+                            <span style="color: #92400E; font-size: 0.85rem;">DDJJ {int(row['anio'])}</span>
+                            <span style="color: #6B7280;"> | </span>
+                            <span style="font-weight: 600;">{fmt_pesos(row['patrimonio'])}</span>
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.success("No se encontraron legisladores que declaren ser proveedores del Estado.")
+
+    # ========================================
+    # TAB 7: EX FUNCIONARIOS
+    # ========================================
+    with tab7:
+        st.markdown("### Legisladores que fueron funcionarios del Ejecutivo")
+        st.caption("Tuvieron audiencias como funcionarios del Poder Ejecutivo durante su mandato")
+        
+        df = detectar_legisladores_con_audiencias_funcionario()
+        
+        if not df.empty:
+            top = df.iloc[0]
+            st.markdown(f"""
+            <div style="background: linear-gradient(135deg, #EFF6FF 0%, #DBEAFE 100%); padding: 1.2rem; border-radius: 12px; margin-bottom: 1rem; border-left: 4px solid #2563EB;">
+                <div style="font-size: 1.1rem; font-weight: 600; color: #1E40AF; margin-bottom: 0.5rem;">DATO</div>
+                <div style="font-size: 1rem; color: #1F2937;">
+                    <strong>{len(df)} legisladores vigentes</strong> tuvieron audiencias como funcionarios del Ejecutivo.
+                    El mas activo fue <strong>{top['nombre']}</strong> con <strong>{int(top['audiencias'])} audiencias</strong>.
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.download_button(
+                "Descargar datos (CSV)",
+                df.to_csv(index=False).encode('utf-8'),
+                "alertas_ex_funcionarios.csv",
+                "text/csv",
+                use_container_width=True
+            )
+            
+            st.markdown("---")
+            for _, row in df.iterrows():
+                st.markdown(f"""
+                <div style="background: white; border-left: 4px solid #2563EB; padding: 0.8rem 1rem; margin-bottom: 0.4rem; border-radius: 0 8px 8px 0;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <span style="font-weight: 600;">{row['nombre']}</span>
+                            <span style="color: #6B7280; font-size: 0.85rem;"> - {row['bloque']}</span>
+                        </div>
+                        <div>
+                            <span style="color: #2563EB; font-weight: 600;">{int(row['audiencias'])} audiencias</span>
+                            <span style="color: #6B7280; font-size: 0.85rem;"> ({row['primera'][:10] if row['primera'] else ''} - {row['ultima'][:10] if row['ultima'] else ''})</span>
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.info("No se encontraron legisladores con audiencias como funcionarios.")
+
+    # ========================================
+    # TAB 8: MAS ENDEUDADOS
+    # ========================================
+    with tab8:
+        st.markdown("### Legisladores mas endeudados")
+        st.caption("Legisladores con deudas declaradas superiores a $10M")
+        
+        df = detectar_mas_endeudados()
+        
+        if not df.empty:
+            top = df.iloc[0]
+            st.markdown(f"""
+            <div style="background: linear-gradient(135deg, #FEF2F2 0%, #FECACA 100%); padding: 1.2rem; border-radius: 12px; margin-bottom: 1rem; border-left: 4px solid #DC2626;">
+                <div style="font-size: 1.1rem; font-weight: 600; color: #991B1B; margin-bottom: 0.5rem;">DATOS DE DEUDAS</div>
+                <div style="font-size: 1rem; color: #1F2937;">
+                    <strong>{len(df)} legisladores vigentes</strong> tienen deudas declaradas superiores a $10M.
+                    El mas endeudado es <strong>{top['nombre']}</strong> con <strong>{fmt_pesos(top['total_deuda'])}</strong>.
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.download_button(
+                "Descargar datos (CSV)",
+                df.to_csv(index=False).encode('utf-8'),
+                "alertas_endeudados.csv",
+                "text/csv",
+                use_container_width=True
+            )
+            
+            st.markdown("---")
+            for _, row in df.iterrows():
+                st.markdown(f"""
+                <div style="background: white; border-left: 4px solid #DC2626; padding: 0.8rem 1rem; margin-bottom: 0.4rem; border-radius: 0 8px 8px 0;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <span style="font-weight: 600;">{row['nombre']}</span>
+                            <span style="color: #6B7280; font-size: 0.85rem;"> - {row['bloque']}</span>
+                        </div>
+                        <div>
+                            <span style="color: #DC2626; font-weight: 600;">{fmt_pesos(row['total_deuda'])}</span>
+                            <span style="color: #6B7280; font-size: 0.85rem;"> ({int(row['num_deudas'])} deudas)</span>
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.success("No se encontraron legisladores con deudas significativas declaradas.")
+
+
     # ========================================
     # METODOLOGIA
     # ========================================
@@ -555,3 +746,106 @@ def render():
         Datos publicos procesados por Lobby · Plataforma de Inteligencia Publica
     </div>
     """, unsafe_allow_html=True)
+@st.cache_data(ttl=3600)
+def detectar_participaciones_empresas(min_empresas=2, min_valor=100000000):
+    """Detecta legisladores con participaciones en múltiples empresas o de alto valor."""
+    db = SessionLocal()
+    try:
+        result = db.execute(text("""
+            SELECT 
+                l.nombre_completo,
+                l.bloque,
+                l.camara,
+                COUNT(DISTINCT b.bien_descripcion) as num_empresas,
+                SUM(b.bien_importe) as valor_total
+            FROM ddjj_bienes b
+            JOIN legisladores l ON b.legislador_id = l.id
+            WHERE b.bien_tipo ILIKE '%PARTICIPACIONES%SIN COTIZACION%'
+              AND l.mandato_hasta >= CURRENT_DATE
+              AND b.anio = (SELECT MAX(anio) FROM ddjj_bienes WHERE legislador_id = b.legislador_id)
+            GROUP BY l.id, l.nombre_completo, l.bloque, l.camara
+            HAVING COUNT(DISTINCT b.bien_descripcion) >= :min_emp OR SUM(b.bien_importe) >= :min_val
+            ORDER BY SUM(b.bien_importe) DESC
+        """), {'min_emp': min_empresas, 'min_val': min_valor})
+        return pd.DataFrame(result.fetchall(), columns=[
+            'nombre', 'bloque', 'camara', 'num_empresas', 'valor_total'
+        ])
+    finally:
+        db.close()
+
+@st.cache_data(ttl=3600)
+def detectar_proveedores_estado():
+    """Detecta legisladores que declaran ser proveedores del Estado."""
+    db = SessionLocal()
+    try:
+        result = db.execute(text("""
+            SELECT DISTINCT
+                l.nombre_completo,
+                l.bloque,
+                l.camara,
+                d.anio,
+                d.patrimonio_neto
+            FROM ddjj_legisladores d
+            JOIN legisladores l ON d.legislador_id = l.id
+            WHERE d.proveedor_contratista = 'SI'
+              AND l.mandato_hasta >= CURRENT_DATE
+            ORDER BY d.patrimonio_neto DESC
+        """))
+        return pd.DataFrame(result.fetchall(), columns=[
+            'nombre', 'bloque', 'camara', 'anio', 'patrimonio'
+        ])
+    finally:
+        db.close()
+
+@st.cache_data(ttl=3600)
+def detectar_legisladores_con_audiencias_funcionario():
+    """Detecta legisladores vigentes que tuvieron audiencias como funcionarios del Ejecutivo."""
+    db = SessionLocal()
+    try:
+        result = db.execute(text("""
+            SELECT 
+                l.nombre_completo,
+                l.bloque,
+                l.camara,
+                COUNT(*) as audiencias,
+                MIN(a.fecha) as primera,
+                MAX(a.fecha) as ultima
+            FROM audiencias_legisladores al
+            JOIN legisladores l ON l.id = al.legislador_id
+            JOIN audiencias_ejecutivo a ON a.id = al.audiencia_id
+            WHERE al.rol = 'funcionario'
+              AND l.mandato_hasta >= CURRENT_DATE
+            GROUP BY l.id, l.nombre_completo, l.bloque, l.camara
+            ORDER BY COUNT(*) DESC
+        """))
+        return pd.DataFrame(result.fetchall(), columns=[
+            'nombre', 'bloque', 'camara', 'audiencias', 'primera', 'ultima'
+        ])
+    finally:
+        db.close()
+
+@st.cache_data(ttl=3600)
+def detectar_mas_endeudados():
+    """Detecta legisladores vigentes con más deudas."""
+    db = SessionLocal()
+    try:
+        result = db.execute(text("""
+            SELECT 
+                l.nombre_completo,
+                l.bloque,
+                l.camara,
+                SUM(d.deuda_importe) as total_deuda,
+                COUNT(*) as num_deudas
+            FROM ddjj_deudas d
+            JOIN legisladores l ON d.legislador_id = l.id
+            WHERE l.mandato_hasta >= CURRENT_DATE
+              AND d.anio = (SELECT MAX(anio) FROM ddjj_deudas WHERE legislador_id = d.legislador_id)
+            GROUP BY l.id, l.nombre_completo, l.bloque, l.camara
+            HAVING SUM(d.deuda_importe) > 10000000
+            ORDER BY SUM(d.deuda_importe) DESC
+        """))
+        return pd.DataFrame(result.fetchall(), columns=[
+            'nombre', 'bloque', 'camara', 'total_deuda', 'num_deudas'
+        ])
+    finally:
+        db.close()

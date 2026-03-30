@@ -185,7 +185,7 @@ def cargar_bloques_con_ddjj():
             GROUP BY l.bloque
             ORDER BY total DESC
         """))
-        return [r[0] for r in result.fetchall()]
+        return [(r[0], r[1]) for r in result.fetchall()]
     finally:
         db.close()
 
@@ -754,7 +754,9 @@ def render():
     bloques = cargar_bloques_con_ddjj()
 
     if bloques:
-        bloque_sel = st.selectbox("Seleccionar bloque", [""] + bloques, key="bloque_sel")
+        bloques_opciones = [""] + [f"{b[0]} ({b[1]} legisladores)" for b in bloques]
+        bloque_sel_display = st.selectbox("Seleccionar bloque", bloques_opciones, key="bloque_sel")
+        bloque_sel = bloque_sel_display.split(" (")[0] if bloque_sel_display else ""
 
         if bloque_sel:
             df_bloque = cargar_evolucion_por_bloque(bloque_sel)
