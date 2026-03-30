@@ -180,7 +180,7 @@ def render():
     st.title("Actividad Legislativa")
     st.markdown("<div class='page-subtitle'>Sesiones, votaciones, asistencia y proyectos</div>", unsafe_allow_html=True)
     
-    tabs = st.tabs(["Sesiones", "Asistencia", "Votaciones", "Proyectos"])
+    tabs = st.tabs(["Sesiones", "Asistencia", "Votaciones", "Proyectos", "Dictámenes"])
     
     # ========================================
     # TAB SESIONES
@@ -417,6 +417,75 @@ def render():
                     </div>
                     """, unsafe_allow_html=True)
 
+    # ========================================
+    # TAB DICTÁMENES
+    # ========================================
+    with tabs[4]:
+        stats_dict = cargar_dictamenes_stats()
+        
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Total dictámenes", f"{stats_dict['total']:,}")
+        col2.metric("Comisiones", stats_dict['comisiones'])
+        col3.metric("Último año", f"{stats_dict['ultimo_anio']:,}")
+        
+        st.markdown("---")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("### Por tipo")
+            df_tipo = cargar_dictamenes_por_tipo()
+            
+            for _, row in df_tipo.iterrows():
+                pct = row['cantidad'] / stats_dict['total'] * 100
+                st.markdown(f"""
+                <div style="display: flex; justify-content: space-between; padding: 0.4rem 0; border-bottom: 1px solid #F3F4F6;">
+                    <span style="font-size: 0.9rem;">{row['tipo']}</span>
+                    <span><strong>{row['cantidad']:,}</strong> <span style="color: #6B7280;">({pct:.1f}%)</span></span>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            st.markdown("### Por año")
+            df_anio = cargar_dictamenes_por_anio()
+            if not df_anio.empty:
+                st.bar_chart(df_anio.set_index('anio'))
+        
+        with col2:
+            st.markdown("### Top comisiones")
+            df_com = cargar_dictamenes_por_comision(15)
+            
+            for i, (_, row) in enumerate(df_com.iterrows()):
+                st.markdown(f"""
+                <div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0; border-bottom: 1px solid #F3F4F6;">
+                    <span style="color: #6B7280; font-weight: 600; width: 25px;">#{i+1}</span>
+                    <span style="flex: 1; font-size: 0.85rem;">{row['comision'].title()}</span>
+                    <span style="font-weight: 600;">{row['cantidad']:,}</span>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        st.markdown("---")
+        st.markdown("### Dictámenes recientes")
+        
+        df_rec = cargar_dictamenes_recientes(20)
+        
+        if not df_rec.empty:
+            for _, row in df_rec.iterrows():
+                st.markdown(f"""
+                <div style="background: white; border: 1px solid #E5E7EB; border-radius: 8px; padding: 0.7rem; margin-bottom: 0.4rem;">
+                    <div style="display: flex; justify-content: space-between;">
+                        <span style="font-weight: 600; color: #2563EB;">{row['expediente']}</span>
+                        <span style="color: #6B7280; font-size: 0.85rem;">{row['fecha']}</span>
+                    </div>
+                    <div style="font-size: 0.85rem; color: #6B7280;">{row['comision'].title()}</div>
+                    <div style="font-size: 0.85rem; margin-top: 0.2rem;">
+                        <span style="background: #F3F4F6; padding: 0.1rem 0.4rem; border-radius: 4px;">{row['tipo']}</span>
+                        {f"<span style='margin-left: 0.5rem;'>OD #{int(row["numero"])}</span>" if row['numero'] and row['numero'] > 0 else ""}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+
+
 @st.cache_data(ttl=3600)
 def cargar_proyectos_por_legislador():
     """Proyectos por legislador vigente."""
@@ -465,5 +534,89 @@ def cargar_proyectos_legislador(legislador_id, limit=50):
             LIMIT :limit
         """), {'leg_id': legislador_id, 'limit': limit})
         return pd.DataFrame(result.fetchall(), columns=['expediente', 'titulo', 'fecha', 'estado'])
+    finally:
+        db.close()
+
+@st.cache_data(ttl=3600)
+def cargar_dictamenes_stats():
+    """Estadísticas de dictámenes."""
+    db = SessionLocal()
+    try:
+        result = db.execute(text("""
+            SELECT 
+                COUNT(*) as total,
+                COUNT(DISTINCT comision) as comisiones,
+                COUNT(*) FILTER (WHERE fecha >= CURRENT_DATE - INTERVAL '1 year') as ultimo_anio
+            FROM dictamenes
+        """))
+        row = result.fetchone()
+        return {
+            'total': row[0],
+            'comisiones': row[1],
+            'ultimo_anio': row[2]
+        }
+    finally:
+        db.close()
+
+@st.cache_data(ttl=3600)
+def cargar_dictamenes_por_comision(limit=20):
+    """Dictámenes por comisión."""
+    db = SessionLocal()
+    try:
+        result = db.execute(text("""
+            SELECT comision, COUNT(*) as cantidad
+            FROM dictamenes
+            GROUP BY comision
+            ORDER BY cantidad DESC
+            LIMIT :limit
+        """), {'limit': limit})
+        return pd.DataFrame(result.fetchall(), columns=['comision', 'cantidad'])
+    finally:
+        db.close()
+
+@st.cache_data(ttl=3600)
+def cargar_dictamenes_por_tipo():
+    """Dictámenes por tipo."""
+    db = SessionLocal()
+    try:
+        result = db.execute(text("""
+            SELECT tipo, COUNT(*) as cantidad
+            FROM dictamenes
+            GROUP BY tipo
+            ORDER BY cantidad DESC
+        """))
+        return pd.DataFrame(result.fetchall(), columns=['tipo', 'cantidad'])
+    finally:
+        db.close()
+
+@st.cache_data(ttl=3600)
+def cargar_dictamenes_por_anio():
+    """Dictámenes por año."""
+    db = SessionLocal()
+    try:
+        result = db.execute(text("""
+            SELECT EXTRACT(YEAR FROM fecha)::int as anio, COUNT(*) as cantidad
+            FROM dictamenes
+            WHERE fecha IS NOT NULL
+            GROUP BY 1
+            ORDER BY 1
+        """))
+        return pd.DataFrame(result.fetchall(), columns=['anio', 'cantidad'])
+    finally:
+        db.close()
+
+@st.cache_data(ttl=3600)
+def cargar_dictamenes_recientes(limit=30):
+    """Dictámenes más recientes."""
+    db = SessionLocal()
+    try:
+        result = db.execute(text("""
+            SELECT expediente, comision, tipo, fecha, numero
+            FROM dictamenes
+            WHERE fecha IS NOT NULL
+            ORDER BY fecha DESC
+            LIMIT :limit
+        """), {'limit': limit})
+        return pd.DataFrame(result.fetchall(), columns=['expediente', 'comision', 'tipo', 'fecha', 'numero'])
     finally:
         db.close()
