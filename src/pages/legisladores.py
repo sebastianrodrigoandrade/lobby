@@ -162,7 +162,7 @@ def cargar_ddjj_legislador(legislador_id):
             SELECT anio, patrimonio_neto, total_bienes, total_deudas,
                    ingresos_neto_gastos, proveedor_contratista, cuit
             FROM ddjj_legisladores
-            WHERE legislador_id = :id AND anio = (SELECT MAX(anio) FROM ddjj_grupo_familiar WHERE legislador_id = :id) AND patrimonio_neto IS NOT NULL AND patrimonio_neto > 0
+            WHERE legislador_id = :id AND patrimonio_neto IS NOT NULL AND patrimonio_neto > 0
             ORDER BY anio DESC
         """), {"id": legislador_id})
         return pd.DataFrame(result.fetchall(), columns=result.keys())
@@ -177,7 +177,7 @@ def cargar_bienes_legislador(legislador_id):
         result = db.execute(text("""
             SELECT bien_tipo, bien_descripcion, bien_importe, anio
             FROM ddjj_bienes b
-            WHERE legislador_id = :id AND anio = (SELECT MAX(anio) FROM ddjj_grupo_familiar WHERE legislador_id = :id)
+            WHERE legislador_id = :id
             ORDER BY b.bien_importe DESC NULLS LAST
         """), {"id": legislador_id})
         return pd.DataFrame(result.fetchall(), columns=['tipo', 'descripcion', 'importe', 'anio'])
@@ -246,7 +246,7 @@ def cargar_variacion_patrimonial(legislador_id):
                     MAX(CASE WHEN anio = 2022 THEN patrimonio_neto END) as pat_2022,
                     MAX(CASE WHEN anio = 2024 THEN patrimonio_neto END) as pat_2024
                 FROM ddjj_legisladores
-                WHERE legislador_id = :id AND anio = (SELECT MAX(anio) FROM ddjj_grupo_familiar WHERE legislador_id = :id) AND patrimonio_neto > 0
+                WHERE legislador_id = :id AND patrimonio_neto > 0
             ),
             inflacion AS (
                 SELECT 
@@ -277,7 +277,7 @@ def calcular_afinidad(legislador_id, limit=5):
     try:
         result = db.execute(text("""
             WITH mis_votos AS (
-                SELECT acta_id, voto FROM votos_hcdn WHERE legislador_id = :id AND anio = (SELECT MAX(anio) FROM ddjj_grupo_familiar WHERE legislador_id = :id)
+                SELECT acta_id, voto FROM votos_hcdn WHERE legislador_id = :id
             ),
             comparacion AS (
                 SELECT
@@ -306,7 +306,7 @@ def calcular_divergencia(legislador_id, limit=5):
     try:
         result = db.execute(text("""
             WITH mis_votos AS (
-                SELECT acta_id, voto FROM votos_hcdn WHERE legislador_id = :id AND anio = (SELECT MAX(anio) FROM ddjj_grupo_familiar WHERE legislador_id = :id)
+                SELECT acta_id, voto FROM votos_hcdn WHERE legislador_id = :id
             ),
             comparacion AS (
                 SELECT
@@ -827,7 +827,7 @@ def cargar_deudas_legislador(legislador_id):
         result = db.execute(text("""
             SELECT deuda_tipo, deuda_descripcion, deuda_clasificacion, deuda_importe
             FROM ddjj_deudas
-            WHERE legislador_id = :id AND anio = (SELECT MAX(anio) FROM ddjj_grupo_familiar WHERE legislador_id = :id)
+            WHERE legislador_id = :id
             ORDER BY deuda_importe DESC NULLS LAST
         """), {"id": legislador_id})
         return pd.DataFrame(result.fetchall(), columns=['tipo', 'descripcion', 'clasificacion', 'importe'])
@@ -843,7 +843,7 @@ def cargar_familia_legislador(legislador_id):
             SELECT familiar_apellido_nombre, familiar_parentesco, familiar_genero, 
                    familiar_fecha_nacimiento, familiar_cuit
             FROM ddjj_grupo_familiar
-            WHERE legislador_id = :id AND anio = (SELECT MAX(anio) FROM ddjj_grupo_familiar WHERE legislador_id = :id)
+            WHERE legislador_id = :id
             ORDER BY familiar_parentesco, familiar_apellido_nombre
         """), {"id": legislador_id})
         return pd.DataFrame(result.fetchall(), columns=['nombre', 'parentesco', 'genero', 'fecha_nacimiento', 'cuit'])

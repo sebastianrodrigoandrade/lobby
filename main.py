@@ -35,7 +35,7 @@ st.markdown("""
 # NAVEGACIÓN
 # ============================================
 
-menu_options = ["Inicio", "Legisladores", "Votaciones", "Comisiones", "Audiencias", "Patrimonio", "Alertas", "Datos"]
+menu_options = ["Inicio", "Legisladores", "Actividad", "Comisiones", "Audiencias", "Patrimonio", "Alertas", "Datos"]
 
 if 'current_page' not in st.session_state:
     st.session_state['current_page'] = "Inicio"
@@ -52,7 +52,7 @@ except ValueError:
 selected = option_menu(
     menu_title=None,
     options=menu_options,
-    icons=["house", "person-badge", "check2-square", "people", "calendar-event", "cash-stack", "exclamation-triangle", "download"],
+    icons=["house", "person-badge", "graph-up", "people", "calendar-event", "cash-stack", "exclamation-triangle", "download"],
     default_index=default_index,
     orientation="horizontal",
     key="main_menu"
@@ -70,7 +70,7 @@ if selected == "Inicio":
     home.render()
 elif selected == "Legisladores":
     legisladores.render()
-elif selected == "Votaciones":
+elif selected == "Actividad":
     actividad.render()
 elif selected == "Comisiones":
     comisiones.render()
