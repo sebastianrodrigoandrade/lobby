@@ -498,11 +498,10 @@ def render():
                 deudas = float(r['total_deudas'] or 0)
                 proveedor = r['proveedor_contratista']
 
-                st.markdown(f"""
-                <div style="background: white; border: 1px solid #E5E7EB; border-radius: 12px; padding: 1rem; margin-bottom: 0.8rem;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-                        <span style="font-weight: 700; font-size: 1.1rem; color: #2563EB;">DDJJ {int(r['anio'])}</span>
-                        {"<span style='background: #FEF3C7; color: #92400E; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.8rem;'>Proveedor del Estado</span>" if proveedor == 'SI' else ""}
+                proveedor_badge = '<span style="background: #FEF3C7; color: #92400E; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.8rem; margin-left: 0.5rem;">Proveedor del Estado</span>' if proveedor == 'SI' else ''
+                html_ddjj = f"""<div style="background: white; border: 1px solid #E5E7EB; border-radius: 12px; padding: 1rem; margin-bottom: 0.8rem;">
+                    <div style="margin-bottom: 0.5rem;">
+                        <span style="font-weight: 700; font-size: 1.1rem; color: #2563EB;">DDJJ {int(r['anio'])}</span>{proveedor_badge}
                     </div>
                     <div style="display: flex; gap: 2rem; flex-wrap: wrap;">
                         <div>
@@ -518,8 +517,8 @@ def render():
                             <span style="font-weight: 600; color: #DC2626;">{fmt_pesos(deudas)}</span>
                         </div>
                     </div>
-                </div>
-                """, unsafe_allow_html=True)
+                </div>"""
+                st.markdown(html_ddjj, unsafe_allow_html=True)
 
     # ========================================
     # TAB BIENES
