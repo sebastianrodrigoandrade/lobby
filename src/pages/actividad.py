@@ -349,5 +349,121 @@ def render():
         col4.metric("Del Ejecutivo", f"{stats_proy['ejecutivo']:,}")
         
         st.markdown("---")
-        st.info(f"Datos desde {stats_proy['desde']} hasta {stats_proy['hasta']}")
-        st.caption("Próximamente: proyectos por autor, por tipo, con media sanción, tiempo de tratamiento")
+        
+        subtabs = st.tabs(["Por Legislador", "Por Bloque"])
+        
+        with subtabs[0]:
+            st.markdown("### Proyectos por legislador vigente")
+            df_proy_leg = cargar_proyectos_por_legislador()
+            
+            if not df_proy_leg.empty:
+                # Selector
+                opciones = df_proy_leg['nombre'].tolist()
+                seleccionado = st.selectbox("Ver proyectos de:", [""] + opciones, key="proy_leg_sel")
+                
+                if not seleccionado:
+                    st.markdown(f"**{len(df_proy_leg)} legisladores vigentes con proyectos**")
+                    st.markdown("---")
+                    
+                    for _, row in df_proy_leg.head(30).iterrows():
+                        st.markdown(f"""
+                        <div style="display: flex; justify-content: space-between; padding: 0.5rem 0; border-bottom: 1px solid #F3F4F6;">
+                            <div>
+                                <span style="font-weight: 600;">{row['nombre']}</span>
+                                <span style="color: #6B7280; font-size: 0.85rem;"> - {row['bloque']}</span>
+                            </div>
+                            <span style="font-weight: 600; color: #2563EB;">{int(row['proyectos'])} proyectos</span>
+                        </div>
+                        """, unsafe_allow_html=True)
+                else:
+                    leg_row = df_proy_leg[df_proy_leg['nombre'] == seleccionado].iloc[0]
+                    leg_id = int(leg_row['id'])
+                    
+                    st.markdown(f"**{seleccionado}** - {leg_row['bloque']}")
+                    st.metric("Total proyectos", int(leg_row['proyectos']))
+                    
+                    df_proy = cargar_proyectos_legislador(leg_id)
+                    
+                    if not df_proy.empty:
+                        st.markdown("---")
+                        for _, row in df_proy.iterrows():
+                            st.markdown(f"""
+                            <div style="background: white; border: 1px solid #E5E7EB; border-radius: 8px; padding: 0.8rem; margin-bottom: 0.5rem;">
+                                <div style="display: flex; justify-content: space-between;">
+                                    <span style="font-weight: 600; color: #2563EB;">{row['expediente']}</span>
+                                    <span style="color: #6B7280; font-size: 0.85rem;">{row['fecha']}</span>
+                                </div>
+                                <div style="font-size: 0.9rem; margin-top: 0.3rem;">{row['titulo'][:150]}{'...' if len(str(row['titulo'])) > 150 else ''}</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+        
+        with subtabs[1]:
+            st.markdown("### Proyectos por bloque")
+            df_proy_bloque = cargar_proyectos_por_bloque()
+            
+            if not df_proy_bloque.empty:
+                for _, row in df_proy_bloque.iterrows():
+                    prom = row['proyectos'] / row['legisladores'] if row['legisladores'] > 0 else 0
+                    st.markdown(f"""
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 0; border-bottom: 1px solid #F3F4F6;">
+                        <div>
+                            <span style="font-weight: 600;">{row['bloque']}</span>
+                            <span style="color: #6B7280; font-size: 0.85rem;"> ({int(row['legisladores'])} legisladores)</span>
+                        </div>
+                        <div style="text-align: right;">
+                            <span style="font-weight: 600; color: #2563EB;">{int(row['proyectos'])}</span>
+                            <span style="color: #6B7280; font-size: 0.85rem;"> proyectos ({prom:.1f} prom)</span>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+@st.cache_data(ttl=3600)
+def cargar_proyectos_por_legislador():
+    """Proyectos por legislador vigente."""
+    db = SessionLocal()
+    try:
+        result = db.execute(text("""
+            SELECT l.id, l.nombre_completo, l.bloque, l.camara, COUNT(*) as proyectos
+            FROM proyectos_legisladores pl
+            JOIN legisladores l ON l.id = pl.legislador_id
+            WHERE l.mandato_hasta >= CURRENT_DATE
+            GROUP BY l.id, l.nombre_completo, l.bloque, l.camara
+            ORDER BY proyectos DESC
+        """))
+        return pd.DataFrame(result.fetchall(), columns=['id', 'nombre', 'bloque', 'camara', 'proyectos'])
+    finally:
+        db.close()
+
+@st.cache_data(ttl=3600)
+def cargar_proyectos_por_bloque():
+    """Proyectos agrupados por bloque de legisladores vigentes."""
+    db = SessionLocal()
+    try:
+        result = db.execute(text("""
+            SELECT l.bloque, COUNT(*) as proyectos, COUNT(DISTINCT l.id) as legisladores
+            FROM proyectos_legisladores pl
+            JOIN legisladores l ON l.id = pl.legislador_id
+            WHERE l.mandato_hasta >= CURRENT_DATE AND l.bloque IS NOT NULL
+            GROUP BY l.bloque
+            ORDER BY proyectos DESC
+        """))
+        return pd.DataFrame(result.fetchall(), columns=['bloque', 'proyectos', 'legisladores'])
+    finally:
+        db.close()
+
+@st.cache_data(ttl=3600)
+def cargar_proyectos_legislador(legislador_id, limit=50):
+    """Proyectos de un legislador específico."""
+    db = SessionLocal()
+    try:
+        result = db.execute(text("""
+            SELECT p.nro_expediente, p.titulo, p.fecha_ingreso, p.estado
+            FROM proyectos_legisladores pl
+            JOIN proyectos p ON p.id = pl.proyecto_id
+            WHERE pl.legislador_id = :leg_id
+            ORDER BY p.fecha_ingreso DESC
+            LIMIT :limit
+        """), {'leg_id': legislador_id, 'limit': limit})
+        return pd.DataFrame(result.fetchall(), columns=['expediente', 'titulo', 'fecha', 'estado'])
+    finally:
+        db.close()
