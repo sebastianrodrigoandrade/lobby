@@ -251,6 +251,49 @@ def boton_compartir(texto_tweet, key):
 # RENDER
 # ============================================
 
+@st.cache_data(ttl=3600)
+def cargar_ausencias_bloque_diputados():
+    """Ausencias por bloque en Diputados."""
+    db = SessionLocal()
+    try:
+        result = db.execute(text('''
+            SELECT l.bloque,
+                   COUNT(*) as votos_totales,
+                   COUNT(*) FILTER (WHERE vh.voto = 'AUSENTE') as ausentes,
+                   ROUND(100.0 * COUNT(*) FILTER (WHERE vh.voto = 'AUSENTE') / COUNT(*), 1) as pct_ausencia
+            FROM votos_hcdn vh
+            JOIN legisladores l ON l.id = vh.legislador_id
+            WHERE l.mandato_hasta >= CURRENT_DATE
+              AND l.camara = 'Diputados'
+            GROUP BY l.bloque
+            HAVING COUNT(*) > 500
+            ORDER BY pct_ausencia DESC
+        '''))
+        return pd.DataFrame(result.fetchall(), columns=['bloque', 'votos', 'ausentes', 'pct'])
+    finally:
+        db.close()
+
+@st.cache_data(ttl=3600)
+def cargar_ausencias_bloque_senado():
+    """Ausencias por bloque en Senado."""
+    db = SessionLocal()
+    try:
+        result = db.execute(text('''
+            SELECT l.bloque,
+                   COUNT(*) as sesiones,
+                   COUNT(*) FILTER (WHERE a.estado = 'AUSENTE') as ausentes,
+                   ROUND(100.0 * COUNT(*) FILTER (WHERE a.estado = 'AUSENTE') / COUNT(*), 1) as pct
+            FROM asistencia_senado a
+            JOIN legisladores l ON l.id = a.legislador_id
+            WHERE l.mandato_hasta >= CURRENT_DATE
+            GROUP BY l.bloque
+            HAVING COUNT(*) > 50
+            ORDER BY pct DESC
+        '''))
+        return pd.DataFrame(result.fetchall(), columns=['bloque', 'sesiones', 'ausentes', 'pct'])
+    finally:
+        db.close()
+
 def render():
     st.markdown("<div style='height: 1.5rem'></div>", unsafe_allow_html=True)
     st.title("Alertas Patrimoniales")
@@ -712,6 +755,44 @@ def render():
             st.success("No se encontraron legisladores con deudas significativas declaradas.")
 
 
+    with tab9:
+        st.markdown("### Bloques con mas ausencias")
+        st.markdown("Porcentaje de ausencias por bloque politico (legisladores vigentes)")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### Diputados")
+            df_dip = cargar_ausencias_bloque_diputados()
+            
+            if not df_dip.empty:
+                for _, row in df_dip.iterrows():
+                    color = "#EF4444" if row['pct'] > 15 else "#F59E0B" if row['pct'] > 10 else "#6B7280"
+                    st.markdown(f"""
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 0; border-bottom: 1px solid #E5E7EB;">
+                        <span>{row['bloque']}</span>
+                        <span style="color: {color}; font-weight: 600;">{row['pct']}%</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                st.caption(f"Basado en {df_dip['votos'].sum():,} votos nominales")
+        
+        with col2:
+            st.markdown("#### Senado")
+            df_sen = cargar_ausencias_bloque_senado()
+            
+            if not df_sen.empty:
+                for _, row in df_sen.iterrows():
+                    color = "#EF4444" if row['pct'] > 15 else "#F59E0B" if row['pct'] > 10 else "#6B7280"
+                    st.markdown(f"""
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 0; border-bottom: 1px solid #E5E7EB;">
+                        <span>{row['bloque']}</span>
+                        <span style="color: {color}; font-weight: 600;">{row['pct']}%</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                st.caption(f"Basado en {df_sen['sesiones'].sum():,} registros de asistencia")
+
     # ========================================
     # METODOLOGIA
     # ========================================
@@ -856,127 +937,4 @@ def detectar_mas_endeudados():
 # TAB 9: BLOQUES MÁS AUSENTES
 # ========================================
 @st.cache_data(ttl=3600)
-def cargar_ausencias_bloque_diputados():
-    """Ausencias por bloque en Diputados."""
-    db = SessionLocal()
-    try:
-        result = db.execute(text('''
-            SELECT l.bloque,
-                   COUNT(*) as votos_totales,
-                   COUNT(*) FILTER (WHERE vh.voto = 'AUSENTE') as ausentes,
-                   ROUND(100.0 * COUNT(*) FILTER (WHERE vh.voto = 'AUSENTE') / COUNT(*), 1) as pct_ausencia
-            FROM votos_hcdn vh
-            JOIN legisladores l ON l.id = vh.legislador_id
-            WHERE l.mandato_hasta >= CURRENT_DATE
-              AND l.camara = 'Diputados'
-            GROUP BY l.bloque
-            HAVING COUNT(*) > 500
-            ORDER BY pct_ausencia DESC
-        '''))
-        return pd.DataFrame(result.fetchall(), columns=['bloque', 'votos', 'ausentes', 'pct'])
-    finally:
-        db.close()
-
 @st.cache_data(ttl=3600)
-def cargar_ausencias_bloque_senado():
-    """Ausencias por bloque en Senado."""
-    db = SessionLocal()
-    try:
-        result = db.execute(text('''
-            SELECT l.bloque,
-                   COUNT(*) as sesiones,
-                   COUNT(*) FILTER (WHERE a.estado = 'AUSENTE') as ausentes,
-                   ROUND(100.0 * COUNT(*) FILTER (WHERE a.estado = 'AUSENTE') / COUNT(*), 1) as pct
-            FROM asistencia_senado a
-            JOIN legisladores l ON l.id = a.legislador_id
-            WHERE l.mandato_hasta >= CURRENT_DATE
-            GROUP BY l.bloque
-            HAVING COUNT(*) > 50
-            ORDER BY pct DESC
-        '''))
-        return pd.DataFrame(result.fetchall(), columns=['bloque', 'sesiones', 'ausentes', 'pct'])
-    finally:
-        db.close()
-
-
-# ========================================
-# TAB 9: BLOQUES MAS AUSENTES
-# ========================================
-@st.cache_data(ttl=3600)
-def cargar_ausencias_bloque_diputados():
-    db = SessionLocal()
-    try:
-        result = db.execute(text('''
-            SELECT l.bloque,
-                   COUNT(*) as votos_totales,
-                   COUNT(*) FILTER (WHERE vh.voto = 'AUSENTE') as ausentes,
-                   ROUND(100.0 * COUNT(*) FILTER (WHERE vh.voto = 'AUSENTE') / COUNT(*), 1) as pct_ausencia
-            FROM votos_hcdn vh
-            JOIN legisladores l ON l.id = vh.legislador_id
-            WHERE l.mandato_hasta >= CURRENT_DATE
-              AND l.camara = 'Diputados'
-            GROUP BY l.bloque
-            HAVING COUNT(*) > 500
-            ORDER BY pct_ausencia DESC
-        '''))
-        return pd.DataFrame(result.fetchall(), columns=['bloque', 'votos', 'ausentes', 'pct'])
-    finally:
-        db.close()
-
-@st.cache_data(ttl=3600)
-def cargar_ausencias_bloque_senado():
-    db = SessionLocal()
-    try:
-        result = db.execute(text('''
-            SELECT l.bloque,
-                   COUNT(*) as sesiones,
-                   COUNT(*) FILTER (WHERE a.estado = 'AUSENTE') as ausentes,
-                   ROUND(100.0 * COUNT(*) FILTER (WHERE a.estado = 'AUSENTE') / COUNT(*), 1) as pct
-            FROM asistencia_senado a
-            JOIN legisladores l ON l.id = a.legislador_id
-            WHERE l.mandato_hasta >= CURRENT_DATE
-            GROUP BY l.bloque
-            HAVING COUNT(*) > 50
-            ORDER BY pct DESC
-        '''))
-        return pd.DataFrame(result.fetchall(), columns=['bloque', 'sesiones', 'ausentes', 'pct'])
-    finally:
-        db.close()
-
-with tab9:
-    st.markdown("### Bloques con mas ausencias")
-    st.markdown("Porcentaje de ausencias por bloque politico (legisladores vigentes)")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("#### Diputados")
-        df_dip = cargar_ausencias_bloque_diputados()
-        
-        if not df_dip.empty:
-            for _, row in df_dip.iterrows():
-                color = "#EF4444" if row['pct'] > 15 else "#F59E0B" if row['pct'] > 10 else "#6B7280"
-                st.markdown(f"""
-                <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 0; border-bottom: 1px solid #E5E7EB;">
-                    <span>{row['bloque']}</span>
-                    <span style="color: {color}; font-weight: 600;">{row['pct']}%</span>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            st.caption(f"Basado en {df_dip['votos'].sum():,} votos nominales")
-    
-    with col2:
-        st.markdown("#### Senado")
-        df_sen = cargar_ausencias_bloque_senado()
-        
-        if not df_sen.empty:
-            for _, row in df_sen.iterrows():
-                color = "#EF4444" if row['pct'] > 15 else "#F59E0B" if row['pct'] > 10 else "#6B7280"
-                st.markdown(f"""
-                <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 0; border-bottom: 1px solid #E5E7EB;">
-                    <span>{row['bloque']}</span>
-                    <span style="color: {color}; font-weight: 600;">{row['pct']}%</span>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            st.caption(f"Basado en {df_sen['sesiones'].sum():,} registros de asistencia")
