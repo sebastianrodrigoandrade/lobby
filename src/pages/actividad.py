@@ -393,7 +393,8 @@ def render():
                                     <span style="font-weight: 600; color: #2563EB;">{row['expediente']}</span>
                                     <span style="color: #6B7280; font-size: 0.85rem;">{row['fecha']}</span>
                                 </div>
-                                <div style="font-size: 0.9rem; margin-top: 0.3rem;">{row['titulo'][:150]}{'...' if len(str(row['titulo'])) > 150 else ''}</div>
+                                <div style="font-size: 0.9rem; margin-top: 0.3rem;">{row['titulo'][:120]}{'...' if len(str(row['titulo'])) > 120 else ''}</div>
+                                {f"<div style='font-size: 0.8rem; color: #6B7280; margin-top: 0.2rem;'>Autor: {row["autores"][:60]}{"..." if row["autores"] and len(str(row["autores"])) > 60 else ""}</div>" if row['autores'] else ""}
                             </div>
                             """, unsafe_allow_html=True)
         
@@ -526,14 +527,14 @@ def cargar_proyectos_legislador(legislador_id, limit=50):
     db = SessionLocal()
     try:
         result = db.execute(text("""
-            SELECT p.nro_expediente, p.titulo, p.fecha_ingreso, p.estado
+            SELECT p.nro_expediente, p.titulo, p.fecha_ingreso, p.estado, p.autores
             FROM proyectos_legisladores pl
             JOIN proyectos p ON p.id = pl.proyecto_id
             WHERE pl.legislador_id = :leg_id
             ORDER BY p.fecha_ingreso DESC
             LIMIT :limit
         """), {'leg_id': legislador_id, 'limit': limit})
-        return pd.DataFrame(result.fetchall(), columns=['expediente', 'titulo', 'fecha', 'estado'])
+        return pd.DataFrame(result.fetchall(), columns=['expediente', 'titulo', 'fecha', 'estado', 'autores'])
     finally:
         db.close()
 
