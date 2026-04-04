@@ -932,9 +932,3 @@ def detectar_mas_endeudados():
     finally:
         db.close()
 
-
-# ========================================
-# TAB 9: BLOQUES MÁS AUSENTES
-# ========================================
-@st.cache_data(ttl=3600)
-@st.cache_data(ttl=3600)
