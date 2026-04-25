@@ -74,6 +74,10 @@ COLORES_BLOQUE = {
 }
 
 def get_color_bloque(bloque):
+    # Tolerante a NaN/None/no-string (pandas a veces inyecta float NaN).
+    if bloque is None or (isinstance(bloque, float) and pd.isna(bloque)):
+        return '#6B7280'
+    bloque = str(bloque).strip()
     if not bloque:
         return '#6B7280'
     bloque_upper = bloque.upper()
@@ -81,6 +85,23 @@ def get_color_bloque(bloque):
         if key in bloque_upper:
             return color
     return '#6B7280'
+
+
+def _nombre_seguro(*candidatos) -> str:
+    """
+    Devuelve el primer candidato que sea string no vacío, ignorando
+    NaN/None. Evita el bug `nan or "fallback"` (NaN es truthy en Python
+    pero no es subscripteable, así que `nombre[0]` revienta).
+    """
+    for v in candidatos:
+        if v is None:
+            continue
+        if isinstance(v, float) and pd.isna(v):
+            continue
+        s = str(v).strip()
+        if s:
+            return s
+    return ""
 
 # ============================================
 # RENDER
@@ -167,19 +188,20 @@ def render():
             with cols[i % 4]:
                 color = get_color_bloque(row['bloque'])
                 foto = row['foto_url'] if pd.notna(row['foto_url']) else None
-                nombre = row['nombre_completo'] or row['nombre_raw']
-                
+                nombre = _nombre_seguro(row.get('nombre_completo'), row.get('nombre_raw'))
+                inicial = nombre[0] if nombre else "?"
+
                 if foto:
                     foto_html = f'<img src="{foto}" style="width: 70px; height: 70px; border-radius: 50%; object-fit: cover; margin-bottom: 0.5rem; border: 3px solid {color};">'
                 else:
-                    foto_html = f'<div style="width: 70px; height: 70px; border-radius: 50%; background: {color}20; display: flex; align-items: center; justify-content: center; color: {color}; font-weight: 700; font-size: 1.5rem; margin: 0 auto 0.5rem auto; border: 3px solid {color};">{nombre[0] if nombre else "?"}</div>'
+                    foto_html = f'<div style="width: 70px; height: 70px; border-radius: 50%; background: {color}20; display: flex; align-items: center; justify-content: center; color: {color}; font-weight: 700; font-size: 1.5rem; margin: 0 auto 0.5rem auto; border: 3px solid {color};">{inicial}</div>'
                 
                 st.markdown(f"""
                 <div style="background: white; border: 1px solid #E5E7EB; border-radius: 12px; padding: 1rem; text-align: center; margin-bottom: 0.5rem;">
                     {foto_html}
                     <div style="font-weight: 600; font-size: 0.95rem;">{nombre}</div>
-                    <div style="color: {color}; font-size: 0.8rem; font-weight: 600;">{row['cargo']}</div>
-                    <div style="color: #6B7280; font-size: 0.75rem;">{row['bloque'] or ''}</div>
+                    <div style="color: {color}; font-size: 0.8rem; font-weight: 600;">{_nombre_seguro(row.get('cargo'))}</div>
+                    <div style="color: #6B7280; font-size: 0.75rem;">{_nombre_seguro(row.get('bloque'))}</div>
                 </div>
                 """, unsafe_allow_html=True)
     
@@ -205,12 +227,13 @@ def render():
                 # Lista de vocales
                 for _, row in vocales_bloque.iterrows():
                     foto = row['foto_url'] if pd.notna(row['foto_url']) else None
-                    nombre = row['nombre_completo'] or row['nombre_raw']
-                    
+                    nombre = _nombre_seguro(row.get('nombre_completo'), row.get('nombre_raw'))
+                    inicial = nombre[0] if nombre else "?"
+
                     if foto:
                         foto_html = f'<img src="{foto}" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover;">'
                     else:
-                        foto_html = f'<div style="width: 40px; height: 40px; border-radius: 50%; background: {color}15; display: flex; align-items: center; justify-content: center; color: {color}; font-weight: 600;">{nombre[0] if nombre else "?"}</div>'
+                        foto_html = f'<div style="width: 40px; height: 40px; border-radius: 50%; background: {color}15; display: flex; align-items: center; justify-content: center; color: {color}; font-weight: 600;">{inicial}</div>'
                     
                     st.markdown(f"""
                     <div style="display: flex; align-items: center; gap: 0.8rem; padding: 0.6rem 0; border-bottom: 1px solid #F3F4F6;">

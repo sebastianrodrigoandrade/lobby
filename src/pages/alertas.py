@@ -518,20 +518,28 @@ def render():
     # ========================================
     with tab4:
         st.markdown("### Legisladores que perdieron poder adquisitivo")
-        st.caption("Su patrimonio crecio menos que la inflacion (493%)")
-        
+        st.caption(
+            "**Período:** 2022 → 2024 (DDJJ ante la Oficina Anticorrupción) · "
+            "**Inflación acumulada del período:** 493% · "
+            "**Criterio:** patrimonio nominal creció menos que el IPC, "
+            "es decir variación real negativa."
+        )
+
         df = detectar_perdedores_inflacion()
-        
+
         if not df.empty:
             peor = df.iloc[0]
-            
+
             st.markdown(f'''
             <div style="background: linear-gradient(135deg, #FFF7ED 0%, #FFEDD5 100%); padding: 1.2rem; border-radius: 12px; margin-bottom: 1rem; border-left: 4px solid #EA580C;">
                 <div style="font-size: 1.1rem; font-weight: 600; color: #C2410C; margin-bottom: 0.5rem;">CONTEXTO</div>
                 <div style="font-size: 1rem; color: #1F2937;">
-                    <strong>{len(df)} legisladores</strong> declararon patrimonios que crecieron menos que la inflacion (493%), 
-                    perdiendo poder adquisitivo. El caso mas extremo es <strong>{peor['nombre']}</strong> 
-                    con una perdida real del <strong>{peor['var_real']:.1f}%</strong>.
+                    Comparando las DDJJ <strong>2022 vs. 2024</strong>,
+                    <strong>{len(df)} legisladores</strong> declararon patrimonios cuyo
+                    crecimiento nominal quedó por debajo de la inflación acumulada del período
+                    (<strong>493%</strong>) — es decir, perdieron poder adquisitivo en términos reales.
+                    El caso más extremo es <strong>{peor['nombre']}</strong>
+                    con una pérdida real del <strong>{peor['var_real']:.1f}%</strong> entre 2022 y 2024.
                 </div>
             </div>
             ''', unsafe_allow_html=True)
@@ -545,20 +553,28 @@ def render():
             )
             
             st.markdown("---")
-            st.markdown(f"**Mostrando los 20 casos mas extremos** de {len(df)} total")
-            
+            st.markdown(
+                f"**Mostrando los 20 casos más extremos** de {len(df)} total · "
+                f"variación real medida entre las DDJJ 2022 y 2024"
+            )
+
             for _, row in df.head(20).iterrows():
                 color_bg = "#FEF2F2" if row['var_real'] < -50 else "#FFF7ED"
                 color_border = "#DC2626" if row['var_real'] < -50 else "#EA580C"
-                
+
                 st.markdown(f'''
                 <div style="background: {color_bg}; border-left: 4px solid {color_border}; padding: 0.8rem 1rem; margin-bottom: 0.4rem; border-radius: 0 8px 8px 0;">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
                         <div>
                             <span style="font-weight: 600;">{row['nombre']}</span>
                             <span style="color: #6B7280; font-size: 0.85rem;"> · {row['camara']}</span>
                         </div>
-                        <div style="color: #DC2626; font-weight: 600;">{fmt_pct(row['var_real'])} real</div>
+                        <div style="display: flex; gap: 1rem; align-items: center;">
+                            <span style="color: #6B7280; font-size: 0.8rem;">
+                                {fmt_pesos(row['pat_2022'])} (2022) → {fmt_pesos(row['pat_2024'])} (2024)
+                            </span>
+                            <span style="color: #DC2626; font-weight: 600;">{fmt_pct(row['var_real'])} real</span>
+                        </div>
                     </div>
                 </div>
                 ''', unsafe_allow_html=True)
@@ -663,22 +679,40 @@ def render():
     # ========================================
     with tab7:
         st.markdown("### Legisladores que fueron funcionarios del Ejecutivo")
-        st.caption("Tuvieron audiencias como funcionarios del Poder Ejecutivo durante su mandato")
-        
+        st.caption(
+            "Cruza el listado de legisladores con mandato vigente contra el "
+            "[Registro de Audiencias del Poder Ejecutivo Nacional]"
+            "(https://datos.gob.ar). "
+            "Aparecen acá los legisladores que figuran como **sujeto obligado** "
+            "(funcionario que recibió la audiencia), lo que indica que ocuparon "
+            "un cargo en el Ejecutivo en algún momento. "
+            "**Importante:** las audiencias pueden ser **anteriores** al mandato legislativo actual."
+        )
+
         df = detectar_legisladores_con_audiencias_funcionario()
-        
+
         if not df.empty:
             top = df.iloc[0]
+            _cargos_top = (top.get('cargos') or '').strip() or '—'
+            _deps_top = (top.get('dependencias') or '').strip() or '—'
+            _primera = str(top['primera'])[:10] if top.get('primera') is not None else '—'
+            _ultima = str(top['ultima'])[:10] if top.get('ultima') is not None else '—'
+
+            _quien = "legislador" if len(df) == 1 else "legisladores"
+            _verbo = "fue" if len(df) == 1 else "fueron"
             st.markdown(f"""
             <div style="background: linear-gradient(135deg, #EFF6FF 0%, #DBEAFE 100%); padding: 1.2rem; border-radius: 12px; margin-bottom: 1rem; border-left: 4px solid #2563EB;">
                 <div style="font-size: 1.1rem; font-weight: 600; color: #1E40AF; margin-bottom: 0.5rem;">DATO</div>
                 <div style="font-size: 1rem; color: #1F2937;">
-                    <strong>{len(df)} legisladores vigentes</strong> tuvieron audiencias como funcionarios del Ejecutivo.
-                    El mas activo fue <strong>{top['nombre']}</strong> con <strong>{int(top['audiencias'])} audiencias</strong>.
+                    <strong>{len(df)} {_quien} vigente{'s' if len(df) != 1 else ''}</strong> {_verbo} funcionario{'s' if len(df) != 1 else ''} del Poder Ejecutivo en algún momento
+                    (figuran como sujeto obligado en el portal de audiencias).
+                    El caso con más registros es <strong>{top['nombre']}</strong> con
+                    <strong>{int(top['audiencias'])} audiencia{'s' if int(top['audiencias']) != 1 else ''}</strong>
+                    ({_primera} a {_ultima}) en el cargo <em>{_cargos_top}</em> · <em>{_deps_top}</em>.
                 </div>
             </div>
             """, unsafe_allow_html=True)
-            
+
             st.download_button(
                 "Descargar datos (CSV)",
                 df.to_csv(index=False).encode('utf-8'),
@@ -686,23 +720,43 @@ def render():
                 "text/csv",
                 use_container_width=True
             )
-            
+
             st.markdown("---")
             for _, row in df.iterrows():
+                _primera_r = str(row['primera'])[:10] if row.get('primera') is not None else '—'
+                _ultima_r = str(row['ultima'])[:10] if row.get('ultima') is not None else '—'
+                _cargos_r = (row.get('cargos') or '').strip() or '—'
+                _deps_r = (row.get('dependencias') or '').strip() or '—'
                 st.markdown(f"""
                 <div style="background: white; border-left: 4px solid #2563EB; padding: 0.8rem 1rem; margin-bottom: 0.4rem; border-radius: 0 8px 8px 0;">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
                         <div>
                             <span style="font-weight: 600;">{row['nombre']}</span>
-                            <span style="color: #6B7280; font-size: 0.85rem;"> - {row['bloque']}</span>
+                            <span style="color: #6B7280; font-size: 0.85rem;"> · {row['bloque']} · {row['camara']}</span>
                         </div>
                         <div>
-                            <span style="color: #2563EB; font-weight: 600;">{int(row['audiencias'])} audiencias</span>
-                            <span style="color: #6B7280; font-size: 0.85rem;"> ({row['primera'][:10] if row['primera'] else ''} - {row['ultima'][:10] if row['ultima'] else ''})</span>
+                            <span style="color: #2563EB; font-weight: 600;">{int(row['audiencias'])} audiencia{'s' if int(row['audiencias']) != 1 else ''}</span>
+                            <span style="color: #6B7280; font-size: 0.85rem;"> ({_primera_r} → {_ultima_r})</span>
                         </div>
+                    </div>
+                    <div style="color: #4B5563; font-size: 0.82rem; margin-top: 0.3rem;">
+                        <span style="color: #6B7280;">Cargo declarado:</span> {_cargos_r}
+                        <span style="color: #6B7280;"> · Dependencia:</span> {_deps_r}
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
+
+                # Auditoría: detalle audiencia por audiencia
+                with st.expander(f"Ver las {int(row['audiencias'])} audiencias en detalle", expanded=False):
+                    df_det = detalle_audiencias_funcionario(int(row['legislador_id']))
+                    if df_det.empty:
+                        st.caption("No se pudieron recuperar los detalles de las audiencias.")
+                    else:
+                        st.dataframe(
+                            df_det,
+                            use_container_width=True,
+                            hide_index=True,
+                        )
         else:
             st.info("No se encontraron legisladores con audiencias como funcionarios.")
 
@@ -881,17 +935,29 @@ def detectar_proveedores_estado():
 
 @st.cache_data(ttl=3600)
 def detectar_legisladores_con_audiencias_funcionario():
-    """Detecta legisladores vigentes que tuvieron audiencias como funcionarios del Ejecutivo."""
+    """
+    Detecta legisladores vigentes que figuran como SUJETO OBLIGADO
+    (es decir, funcionarios del Ejecutivo que recibieron audiencias)
+    en el portal datos.gob.ar.
+
+    Importante: estas audiencias pueden ser anteriores al mandato
+    legislativo actual (es decir, cuando esa persona era ministro/
+    secretario antes de asumir su banca). Devolvemos cargo, dependencia
+    y rango de fechas para que el periodista pueda verificar.
+    """
     db = SessionLocal()
     try:
         result = db.execute(text("""
-            SELECT 
+            SELECT
+                l.id                                       AS legislador_id,
                 l.nombre_completo,
                 l.bloque,
                 l.camara,
-                COUNT(*) as audiencias,
-                MIN(a.fecha) as primera,
-                MAX(a.fecha) as ultima
+                COUNT(*)                                   AS audiencias,
+                MIN(a.fecha)                               AS primera,
+                MAX(a.fecha)                               AS ultima,
+                STRING_AGG(DISTINCT a.sujeto_obligado_cargo, ' · ')         AS cargos,
+                STRING_AGG(DISTINCT a.sujeto_obligado_dependencia, ' · ')   AS dependencias
             FROM audiencias_legisladores al
             JOIN legisladores l ON l.id = al.legislador_id
             JOIN audiencias_ejecutivo a ON a.id = al.audiencia_id
@@ -901,7 +967,37 @@ def detectar_legisladores_con_audiencias_funcionario():
             ORDER BY COUNT(*) DESC
         """))
         return pd.DataFrame(result.fetchall(), columns=[
-            'nombre', 'bloque', 'camara', 'audiencias', 'primera', 'ultima'
+            'legislador_id', 'nombre', 'bloque', 'camara',
+            'audiencias', 'primera', 'ultima', 'cargos', 'dependencias',
+        ])
+    finally:
+        db.close()
+
+
+@st.cache_data(ttl=3600)
+def detalle_audiencias_funcionario(legislador_id: int):
+    """
+    Devuelve las audiencias individuales en las que el legislador
+    figura como sujeto obligado (funcionario), para auditoría manual.
+    """
+    db = SessionLocal()
+    try:
+        result = db.execute(text("""
+            SELECT a.fecha,
+                   a.sujeto_obligado_cargo        AS cargo,
+                   a.sujeto_obligado_dependencia  AS dependencia,
+                   a.solicitante_nombre           AS solicitante,
+                   a.solicitante_ocupacion        AS ocupacion,
+                   a.motivo,
+                   a.lugar
+            FROM audiencias_legisladores al
+            JOIN audiencias_ejecutivo a ON a.id = al.audiencia_id
+            WHERE al.rol = 'funcionario'
+              AND al.legislador_id = :id
+            ORDER BY a.fecha DESC
+        """), {"id": int(legislador_id)})
+        return pd.DataFrame(result.fetchall(), columns=[
+            'fecha', 'cargo', 'dependencia', 'solicitante', 'ocupacion', 'motivo', 'lugar'
         ])
     finally:
         db.close()

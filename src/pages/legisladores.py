@@ -6,8 +6,24 @@ Perfil completo: votaciones, patrimonio, bienes, proyectos y afinidades
 import streamlit as st
 import pandas as pd
 import urllib.parse
+import plotly.graph_objects as go
 from sqlalchemy import text
 from src.database import SessionLocal
+from src import tarjetas
+
+# Paleta unificada para tipos de voto (usar tanto en Distribución como en Evolución temporal)
+COLOR_VOTOS = {
+    'AFIRMATIVO': '#059669',
+    'NEGATIVO': '#DC2626',
+    'AUSENTE': '#9CA3AF',
+    'ABSTENCION': '#D97706',
+    'ABSTENCIÓN': '#D97706',
+    'PRESIDENTE': '#6B7280',
+}
+
+
+def _color_voto(tipo: str) -> str:
+    return COLOR_VOTOS.get((tipo or '').upper(), '#D97706')
 
 # ============================================
 # CONSTANTES
@@ -208,6 +224,101 @@ def cargar_comisiones_legislador(legislador_id):
         db.close()
 
 @st.cache_data(ttl=3600)
+def cargar_intervenciones_legislador(legislador_id: int) -> dict:
+    """
+    Devuelve un resumen de las intervenciones en el recinto para este
+    legislador: total, palabras, última fecha, preview.
+    Si la tabla `intervenciones_recinto` no existe o no tiene datos
+    devuelve un dict con ceros (no rompe la UI).
+    """
+    db = SessionLocal()
+    out = {
+        "total": 0, "palabras": 0, "ultima_fecha": None,
+        "ultima_preview": None, "promedio_palabras": 0,
+    }
+    try:
+        r = db.execute(text("""
+            SELECT
+                COUNT(*)                         AS total,
+                COALESCE(SUM(palabras), 0)       AS palabras,
+                MAX(fecha)                       AS ultima_fecha,
+                COALESCE(AVG(palabras), 0)::int  AS promedio
+            FROM intervenciones_recinto
+            WHERE legislador_id = :id
+        """), {"id": legislador_id}).fetchone()
+        if r:
+            out["total"] = int(r[0] or 0)
+            out["palabras"] = int(r[1] or 0)
+            out["ultima_fecha"] = r[2]
+            out["promedio_palabras"] = int(r[3] or 0)
+        if out["total"] > 0:
+            preview = db.execute(text("""
+                SELECT LEFT(texto, 180)
+                FROM intervenciones_recinto
+                WHERE legislador_id = :id
+                ORDER BY fecha DESC, orden_intervencion DESC
+                LIMIT 1
+            """), {"id": legislador_id}).scalar()
+            out["ultima_preview"] = preview
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+    return out
+
+
+@st.cache_data(ttl=3600)
+def cargar_stats_tarjeta(legislador_id: int, nombre_completo: str) -> dict:
+    """
+    Devuelve stats compactos para la tarjeta compartible:
+    proyectos firmados, % de asistencia, último patrimonio declarado, menciones CIJ.
+    Todas las queries son tolerantes a tablas faltantes.
+    """
+    db = SessionLocal()
+    out = {"proyectos": 0, "asistencia_pct": None, "patrimonio_total": None, "menciones_cij": 0}
+    try:
+        try:
+            r = db.execute(text("""
+                SELECT COUNT(*) FROM proyectos_legisladores WHERE legislador_id = :id
+            """), {"id": legislador_id}).scalar()
+            out["proyectos"] = int(r or 0)
+        except Exception:
+            db.rollback()
+
+        try:
+            r = db.execute(text("""
+                SELECT COUNT(*) FILTER (WHERE voto != 'AUSENTE')::float / NULLIF(COUNT(*), 0) * 100
+                FROM votos_hcdn WHERE legislador_id = :id
+            """), {"id": legislador_id}).scalar()
+            out["asistencia_pct"] = float(r) if r is not None else None
+        except Exception:
+            db.rollback()
+
+        try:
+            r = db.execute(text("""
+                SELECT patrimonio_neto FROM ddjj_legisladores
+                WHERE legislador_id = :id AND patrimonio_neto IS NOT NULL
+                ORDER BY anio DESC LIMIT 1
+            """), {"id": legislador_id}).scalar()
+            out["patrimonio_total"] = float(r) if r is not None else None
+        except Exception:
+            db.rollback()
+
+        try:
+            r = db.execute(text("""
+                SELECT COUNT(*) FROM menciones_cij
+                WHERE legislador_nombre ILIKE :nombre
+            """), {"nombre": f"%{nombre_completo}%"}).scalar()
+            out["menciones_cij"] = int(r or 0)
+        except Exception:
+            db.rollback()
+
+        return out
+    finally:
+        db.close()
+
+
+@st.cache_data(ttl=3600)
 def cargar_mediana_y_ranking(legislador_id, anio=2024):
     db = SessionLocal()
     try:
@@ -271,13 +382,29 @@ def cargar_variacion_patrimonial(legislador_id):
     finally:
         db.close()
 
+def _filtro_leyes_sql(solo_leyes: bool) -> str:
+    """Devuelve el subfiltro SQL que restringe a actas cuyo asunto sea un proyecto de ley."""
+    if not solo_leyes:
+        return ""
+    return (
+        " AND EXISTS ("
+        "   SELECT 1 FROM votaciones_hcdn vh "
+        "   WHERE vh.acta_id = v.acta_id "
+        "     AND (vh.asunto ILIKE '%proyecto de ley%' OR vh.asunto ILIKE '%ley %' OR vh.asunto ILIKE '% ley')"
+        " )"
+    )
+
 @st.cache_data(ttl=3600)
-def calcular_afinidad(legislador_id, limit=5):
+def calcular_afinidad(legislador_id, limit=5, solo_leyes=False):
     db = SessionLocal()
     try:
-        result = db.execute(text("""
+        filtro_leyes = _filtro_leyes_sql(solo_leyes)
+        query = f"""
             WITH mis_votos AS (
-                SELECT acta_id, voto FROM votos_hcdn WHERE legislador_id = :id
+                SELECT v.acta_id, v.voto
+                FROM votos_hcdn v
+                WHERE v.legislador_id = :id
+                {filtro_leyes}
             ),
             comparacion AS (
                 SELECT
@@ -290,23 +417,29 @@ def calcular_afinidad(legislador_id, limit=5):
                 HAVING COUNT(*) >= 10
             )
             SELECT l.nombre_completo, COALESCE(l.bloque, '—') as bloque,
-                   ROUND(100.0 * c.votos_iguales / c.votos_comunes, 1) as afinidad_pct
+                   ROUND(100.0 * c.votos_iguales / c.votos_comunes, 1) as afinidad_pct,
+                   c.votos_comunes
             FROM comparacion c
             JOIN legisladores l ON l.id = c.legislador_id
             ORDER BY afinidad_pct DESC
             LIMIT :limit
-        """), {"id": legislador_id, "limit": limit})
+        """
+        result = db.execute(text(query), {"id": legislador_id, "limit": limit})
         return pd.DataFrame(result.fetchall(), columns=result.keys())
     finally:
         db.close()
 
 @st.cache_data(ttl=3600)
-def calcular_divergencia(legislador_id, limit=5):
+def calcular_divergencia(legislador_id, limit=5, solo_leyes=False):
     db = SessionLocal()
     try:
-        result = db.execute(text("""
+        filtro_leyes = _filtro_leyes_sql(solo_leyes)
+        query = f"""
             WITH mis_votos AS (
-                SELECT acta_id, voto FROM votos_hcdn WHERE legislador_id = :id
+                SELECT v.acta_id, v.voto
+                FROM votos_hcdn v
+                WHERE v.legislador_id = :id
+                {filtro_leyes}
             ),
             comparacion AS (
                 SELECT
@@ -319,12 +452,14 @@ def calcular_divergencia(legislador_id, limit=5):
                 HAVING COUNT(*) >= 10
             )
             SELECT l.nombre_completo, COALESCE(l.bloque, '—') as bloque,
-                   ROUND(100.0 * c.votos_iguales / c.votos_comunes, 1) as afinidad_pct
+                   ROUND(100.0 * c.votos_iguales / c.votos_comunes, 1) as afinidad_pct,
+                   c.votos_comunes
             FROM comparacion c
             JOIN legisladores l ON l.id = c.legislador_id
             ORDER BY afinidad_pct ASC
             LIMIT :limit
-        """), {"id": legislador_id, "limit": limit})
+        """
+        result = db.execute(text(query), {"id": legislador_id, "limit": limit})
         return pd.DataFrame(result.fetchall(), columns=result.keys())
     finally:
         db.close()
@@ -445,9 +580,59 @@ def render():
         </div>
         """, unsafe_allow_html=True)
     
-    # Botón compartir
+    # Intervenciones en el recinto (Diarios de Sesiones)
+    _iv = cargar_intervenciones_legislador(leg_id)
+    if _iv["total"] > 0:
+        _ultima = _iv["ultima_fecha"].strftime("%d/%m/%Y") if _iv["ultima_fecha"] else "—"
+        _preview_html = ""
+        if _iv["ultima_preview"]:
+            _prev_safe = (_iv["ultima_preview"] or "").replace("<", "&lt;").replace(">", "&gt;").replace("\n", " ")
+            _preview_html = (
+                f"<div style='margin-top: 0.5rem; font-style: italic; color: #4B5563; "
+                f"font-size: 0.85rem; line-height: 1.4;'>"
+                f"«{_prev_safe}…»</div>"
+            )
+        st.markdown(f"""
+        <div style="background: #F0F9FF; border-left: 4px solid #0EA5E9; padding: 0.8rem 1rem;
+                    border-radius: 8px; margin-bottom: 1rem; font-size: 0.9rem;">
+            <div style="display: flex; gap: 2rem; flex-wrap: wrap; align-items: center;">
+                <div><span style="color: #6B7280;">Intervenciones en el recinto:</span>
+                     <strong>{_iv['total']:,}</strong></div>
+                <div><span style="color: #6B7280;">Palabras pronunciadas:</span>
+                     <strong>{_iv['palabras']:,}</strong></div>
+                <div><span style="color: #6B7280;">Promedio por intervención:</span>
+                     <strong>{_iv['promedio_palabras']:,}</strong> pal.</div>
+                <div><span style="color: #6B7280;">Última:</span> <strong>{_ultima}</strong></div>
+            </div>
+            {_preview_html}
+        </div>
+        """, unsafe_allow_html=True)
+
+    # Botón compartir + tarjeta descargable
     tweet = f"{seleccionado} ({row['bloque']}, {row['camara']}). Mira su perfil completo en Lobby."
-    st.link_button("Compartir en X", generar_tweet(tweet), use_container_width=False)
+    col_share1, col_share2, _ = st.columns([1.2, 1.6, 4])
+    with col_share1:
+        st.link_button("Compartir en X", generar_tweet(tweet), use_container_width=True)
+    with col_share2:
+        _stats = cargar_stats_tarjeta(leg_id, seleccionado)
+        _png = tarjetas.tarjeta_legislador({
+            "nombre": seleccionado,
+            "bloque": row["bloque"],
+            "camara": row["camara"],
+            "provincia": row["distrito"],
+            "proyectos": _stats["proyectos"],
+            "asistencia_pct": _stats["asistencia_pct"],
+            "patrimonio_total": _stats["patrimonio_total"],
+            "menciones_cij": _stats["menciones_cij"],
+        })
+        _fname = "".join(c for c in seleccionado.lower().replace(",", "").replace(" ", "_") if c.isalnum() or c == "_")
+        st.download_button(
+            "📸 Tarjeta para redes",
+            _png,
+            file_name=f"lobby_{_fname}.png",
+            mime="image/png",
+            use_container_width=True,
+        )
 
     # Tabs
     tabs = st.tabs(["Patrimonio", "Bienes", "Deudas", "Familia", "Votaciones", "Proyectos", "Afinidades"])
@@ -593,38 +778,68 @@ def render():
     # ========================================
     with tabs[2]:
         df_deudas = cargar_deudas_legislador(leg_id)
-        
+
         if df_deudas.empty:
             st.info("No hay deudas registradas para este legislador.")
         else:
             total_deuda = df_deudas['importe'].sum()
-            st.markdown(f"**Total adeudado: {fmt_pesos(total_deuda)}**")
-            
+            anio_deudas = int(df_deudas['anio'].iloc[0]) if pd.notna(df_deudas['anio'].iloc[0]) else None
+            _periodo = f" (DDJJ {anio_deudas})" if anio_deudas else ""
+            st.markdown(f"**Total adeudado{_periodo}: {fmt_pesos(total_deuda)}**")
+            st.caption(
+                "Datos extraídos de la última DDJJ disponible ante la Oficina Anticorrupción. "
+                "Los importes son los declarados a esa fecha — no necesariamente la situación actual."
+            )
+
             # Resumen por tipo
             col1, col2, col3 = st.columns(3)
             tipos = df_deudas.groupby('tipo')['importe'].sum()
-            col1.metric("Comun", fmt_pesos(tipos.get('COMUN', 0)))
+            col1.metric("Común", fmt_pesos(tipos.get('COMUN', 0)))
             col2.metric("Hipotecario", fmt_pesos(tipos.get('HIPOTECARIO', 0)))
             col3.metric("Prendario", fmt_pesos(tipos.get('PRENDARIO', 0)))
-            
+
             st.markdown("---")
-            st.markdown("### Detalle de deudas")
-            
-            for _, d in df_deudas.iterrows():
-                # Extraer acreedor
-                desc = d['descripcion'] or ''
-                acreedor = desc.split(' -CUIT')[0] if ' -CUIT' in desc else desc[:60]
-                
-                color = '#DC2626' if d['tipo'] == 'HIPOTECARIO' else '#F59E0B'
+            st.markdown(f"### Detalle de deudas ({len(df_deudas)})")
+
+            for i, d in df_deudas.iterrows():
+                acreedor, cuit = _parsear_acreedor(d.get('descripcion'))
+                tipo = d.get('tipo') or '—'
+                clasif = d.get('clasificacion') or '—'
+                importe = d.get('importe')
+
+                color = '#DC2626' if tipo == 'HIPOTECARIO' else (
+                    '#7C3AED' if tipo == 'PRENDARIO' else '#F59E0B'
+                )
+
+                # Tarjeta visible
                 st.markdown(f"""
-                <div style="border-left: 4px solid {color}; padding: 0.6rem 1rem; margin-bottom: 0.5rem; background: {color}10; border-radius: 0 8px 8px 0;">
-                    <div style="display: flex; justify-content: space-between;">
-                        <span style="font-weight: 600;">{acreedor}</span>
-                        <span style="font-weight: 700; color: {color};">{fmt_pesos(d['importe'])}</span>
+                <div style="border-left: 4px solid {color}; padding: 0.7rem 1rem; margin-bottom: 0.4rem; background: {color}10; border-radius: 0 8px 8px 0;">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap;">
+                        <div>
+                            <div style="font-weight: 600;">{acreedor}</div>
+                            <div style="font-size: 0.8rem; color: #6B7280; margin-top: 0.15rem;">
+                                {tipo} · {clasif}{f' · CUIT {cuit}' if cuit else ''}
+                            </div>
+                        </div>
+                        <div style="font-weight: 700; color: {color}; white-space: nowrap;">{fmt_pesos(importe)}</div>
                     </div>
-                    <div style="font-size: 0.8rem; color: #6B7280;">{d['tipo']} - {d['clasificacion'] or ''}</div>
                 </div>
                 """, unsafe_allow_html=True)
+
+                # Expander con texto completo (auditoría)
+                with st.expander("Ver descripción completa de la deuda", expanded=False):
+                    desc_full = d.get('descripcion') or '(sin descripción)'
+                    st.markdown(f"""
+                    **Año DDJJ:** {anio_deudas if anio_deudas else '—'}
+                    **Tipo:** {tipo}
+                    **Clasificación:** {clasif}
+                    **Acreedor (parseado):** {acreedor}
+                    **CUIT del acreedor:** {cuit or '—'}
+                    **Importe declarado:** {fmt_pesos(importe)}
+
+                    **Descripción original (campo `deuda_descripcion`):**
+                    """)
+                    st.code(str(desc_full), language=None)
 
     # ========================================
     # TAB FAMILIA
@@ -702,15 +917,7 @@ def render():
                     tipo = r['Tipo']
                     cant = r['Cantidad']
                     pct = cant / len(df_votos) * 100
-
-                    if tipo == 'AFIRMATIVO':
-                        color = '#059669'
-                    elif tipo == 'NEGATIVO':
-                        color = '#DC2626'
-                    elif tipo == 'AUSENTE':
-                        color = '#9CA3AF'
-                    else:
-                        color = '#D97706'
+                    color = _color_voto(tipo)
 
                     st.markdown(f"""
                     <div style="margin-bottom: 0.5rem; padding: 0.5rem; background: {color}10; border-radius: 8px;">
@@ -728,18 +935,43 @@ def render():
                     if not df_fecha.empty:
                         df_fecha['año'] = df_fecha['fecha'].dt.year
                         evolucion = df_fecha.groupby(['año', 'voto_individual']).size().unstack(fill_value=0)
-                        st.bar_chart(evolucion)
 
-            st.markdown("**Ultimas votaciones**")
-            df_con_fecha = df_votos.dropna(subset=['fecha']).head(15)
+                        # Gráfico de barras apiladas con la MISMA paleta que Distribución
+                        fig_evo = go.Figure()
+                        orden_tipos = ['AFIRMATIVO', 'NEGATIVO', 'ABSTENCION', 'ABSTENCIÓN', 'AUSENTE', 'PRESIDENTE']
+                        columnas_ordenadas = (
+                            [t for t in orden_tipos if t in evolucion.columns]
+                            + [t for t in evolucion.columns if t not in orden_tipos]
+                        )
+                        for tipo in columnas_ordenadas:
+                            fig_evo.add_trace(go.Bar(
+                                x=evolucion.index.astype(str),
+                                y=evolucion[tipo],
+                                name=tipo,
+                                marker_color=_color_voto(tipo),
+                            ))
+                        fig_evo.update_layout(
+                            barmode='stack',
+                            xaxis_title='Año',
+                            yaxis_title='Votos',
+                            height=320,
+                            margin=dict(l=10, r=10, t=10, b=10),
+                            legend=dict(orientation='h', y=-0.25),
+                        )
+                        st.plotly_chart(fig_evo, use_container_width=True)
+
+            # Tabla detallada colapsada: antes aparecía por default y agregaba ruido
+            # debajo de los gráficos de Distribución / Evolución temporal.
+            df_con_fecha = df_votos.dropna(subset=['fecha'])
             if not df_con_fecha.empty:
-                st.dataframe(
-                    df_con_fecha[['fecha', 'voto_individual', 'titulo_acta']].rename(columns={
-                        'fecha': 'Fecha', 'voto_individual': 'Voto', 'titulo_acta': 'Asunto'
-                    }),
-                    use_container_width=True,
-                    hide_index=True
-                )
+                with st.expander(f"📋 Ver últimas {min(15, len(df_con_fecha))} votaciones en detalle", expanded=False):
+                    st.dataframe(
+                        df_con_fecha.head(15)[['fecha', 'voto_individual', 'titulo_acta']].rename(columns={
+                            'fecha': 'Fecha', 'voto_individual': 'Voto', 'titulo_acta': 'Asunto'
+                        }),
+                        use_container_width=True,
+                        hide_index=True
+                    )
 
     # ========================================
     # TAB PROYECTOS
@@ -768,17 +1000,26 @@ def render():
         <div style="background: #F0F9FF; border: 1px solid #BAE6FD; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
             <strong>Como se calcula?</strong>
             <span style="color: #0369A1; font-size: 0.9rem;">
-            Se comparan todas las votaciones donde ambos legisladores participaron. 
+            Se comparan todas las votaciones donde ambos legisladores participaron.
             El porcentaje indica en cuantas votaron igual.
             </span>
         </div>
         """, unsafe_allow_html=True)
-        
+
+        tipo_votacion = st.radio(
+            "Base de cálculo",
+            ["Todas las votaciones", "Solo proyectos de ley"],
+            horizontal=True,
+            key=f"afin_tipo_{leg_id}",
+            help="'Solo proyectos de ley' excluye mociones, apartamientos de reglamento y cuestiones de privilegio."
+        )
+        solo_leyes = tipo_votacion == "Solo proyectos de ley"
+
         col_af1, col_af2 = st.columns(2)
-        
+
         with col_af1:
             st.markdown("**Vota mas igual con...**")
-            df_afin = calcular_afinidad(leg_id)
+            df_afin = calcular_afinidad(leg_id, solo_leyes=solo_leyes)
             if df_afin.empty:
                 st.info("Sin datos suficientes.")
             else:
@@ -799,7 +1040,7 @@ def render():
         
         with col_af2:
             st.markdown("**Vota mas distinto con...**")
-            df_div = calcular_divergencia(leg_id)
+            df_div = calcular_divergencia(leg_id, solo_leyes=solo_leyes)
             if df_div.empty:
                 st.info("Sin datos suficientes.")
             else:
@@ -820,18 +1061,59 @@ def render():
 
 @st.cache_data(ttl=3600)
 def cargar_deudas_legislador(legislador_id):
-    """Carga deudas del legislador."""
+    """
+    Carga deudas del legislador correspondientes a la última DDJJ disponible.
+    Incluye el año, para que el dato sea verificable.
+    """
     db = SessionLocal()
     try:
         result = db.execute(text("""
-            SELECT deuda_tipo, deuda_descripcion, deuda_clasificacion, deuda_importe
+            SELECT
+                anio,
+                deuda_tipo,
+                deuda_descripcion,
+                deuda_clasificacion,
+                deuda_importe
             FROM ddjj_deudas
             WHERE legislador_id = :id
+              AND anio = (
+                  SELECT MAX(anio) FROM ddjj_deudas WHERE legislador_id = :id
+              )
             ORDER BY deuda_importe DESC NULLS LAST
         """), {"id": legislador_id})
-        return pd.DataFrame(result.fetchall(), columns=['tipo', 'descripcion', 'clasificacion', 'importe'])
+        return pd.DataFrame(
+            result.fetchall(),
+            columns=['anio', 'tipo', 'descripcion', 'clasificacion', 'importe'],
+        )
     finally:
         db.close()
+
+
+def _parsear_acreedor(descripcion: str) -> tuple[str, str | None]:
+    """
+    El campo `deuda_descripcion` típico de la OA viene con el acreedor seguido
+    de "-CUIT XX-XXXXXXXX-X" y a veces más texto. Devolvemos (acreedor, cuit).
+    Tolerante a None / NaN / formatos sucios.
+    """
+    if descripcion is None:
+        return ("Acreedor no informado", None)
+    if isinstance(descripcion, float) and pd.isna(descripcion):
+        return ("Acreedor no informado", None)
+    s = str(descripcion).strip()
+    if not s:
+        return ("Acreedor no informado", None)
+    # Buscar CUIT con regex laxa
+    import re as _re
+    m = _re.search(r"CUIT[\s:\-]*([\d\-]{8,15})", s, flags=_re.IGNORECASE)
+    cuit = m.group(1) if m else None
+    # Acreedor = texto antes del primer "-CUIT" / "CUIT"
+    if " -CUIT" in s:
+        acreedor = s.split(" -CUIT", 1)[0].strip()
+    elif " CUIT" in s:
+        acreedor = s.split(" CUIT", 1)[0].strip()
+    else:
+        acreedor = s.strip(" -")
+    return (acreedor or "Acreedor no informado", cuit)
 
 @st.cache_data(ttl=3600)
 def cargar_familia_legislador(legislador_id):
